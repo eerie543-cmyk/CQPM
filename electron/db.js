@@ -29,19 +29,21 @@ function initSchema(db) {
     );
 
     CREATE TABLE IF NOT EXISTS parameters (
-      id            INTEGER PRIMARY KEY AUTOINCREMENT,
-      department    TEXT    NOT NULL CHECK(department IN ('serology','molecularBio','microbiology')),
-      name          TEXT    NOT NULL,
-      description   TEXT,
-      frequency     TEXT    NOT NULL CHECK(frequency IN ('daily','weekly','biweekly','monthly','quarterly','yearly')),
-      days_of_week  TEXT,
-      day_of_month  INTEGER,
-      entry_type    TEXT    NOT NULL DEFAULT 'checkbox' CHECK(entry_type IN ('checkbox','numeric','text')),
-      unit          TEXT,
-      critical      INTEGER NOT NULL DEFAULT 0,
-      active        INTEGER NOT NULL DEFAULT 1,
-      sort_order    INTEGER NOT NULL DEFAULT 0,
-      created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      department     TEXT    NOT NULL CHECK(department IN ('serology','molecularBio','microbiology')),
+      name           TEXT    NOT NULL,
+      description    TEXT,
+      schedule_type  TEXT    NOT NULL DEFAULT 'frequency' CHECK(schedule_type IN ('frequency','specific')),
+      frequency      TEXT    CHECK(frequency IN ('daily','weekly','biweekly','monthly','quarterly','yearly')),
+      days_of_week   TEXT,
+      day_of_month   INTEGER,
+      specific_dates TEXT,
+      entry_type     TEXT    NOT NULL DEFAULT 'checkbox' CHECK(entry_type IN ('checkbox','numeric','text')),
+      unit           TEXT,
+      critical       INTEGER NOT NULL DEFAULT 0,
+      active         INTEGER NOT NULL DEFAULT 1,
+      sort_order     INTEGER NOT NULL DEFAULT 0,
+      created_at     TEXT    NOT NULL DEFAULT (datetime('now'))
     );
 
     CREATE TABLE IF NOT EXISTS entries (
@@ -69,36 +71,6 @@ function initSchema(db) {
     `).run(hash);
   }
 
-  // Seed sample parameters if none exist
-  const pCount = db.prepare('SELECT COUNT(*) AS c FROM parameters').get();
-  if (pCount.c === 0) seedParameters(db);
-}
-
-function seedParameters(db) {
-  const insert = db.prepare(`
-    INSERT INTO parameters (department, name, description, frequency, days_of_week, entry_type, critical, sort_order)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  const params = [
-    ['serology',      'Daily QC Run',           'Run positive & negative controls',        'daily',     null,    'checkbox', 1, 0],
-    ['serology',      'Reagent Check',           'Check reagent expiry and lot numbers',    'daily',     null,    'checkbox', 0, 1],
-    ['serology',      'Water Bath Temperature',  'Log water bath temp (37°C ± 0.5)',        'daily',     null,    'numeric',  1, 2],
-    ['serology',      'Centrifuge Maintenance',  'Weekly centrifuge check',                 'weekly',    '1',     'checkbox', 0, 3],
-    ['serology',      'Reagent Lot Validation',  'Validate new lot before use',             'monthly',   null,    'checkbox', 0, 4],
-
-    ['molecularBio',  'PCR Controls',            'Run positive, negative & internal ctrl',  'daily',     null,    'checkbox', 1, 0],
-    ['molecularBio',  'Extraction QC',           'Check extraction efficiency',             'daily',     null,    'checkbox', 1, 1],
-    ['molecularBio',  'Contamination Check',     'Environmental contamination monitoring',  'weekly',    '1,3,5', 'checkbox', 0, 2],
-    ['molecularBio',  'Thermocycler Check',      'Verify thermocycler performance',         'weekly',    '1',     'checkbox', 0, 3],
-    ['molecularBio',  'PT Submission',           'External proficiency testing submission', 'quarterly', null,    'checkbox', 0, 4],
-
-    ['microbiology',  'Media QC',                'Quality check on prepared culture media', 'daily',     null,    'checkbox', 1, 0],
-    ['microbiology',  'Incubator Temperature',   'Log incubator temp (35–37°C)',            'daily',     null,    'numeric',  1, 1],
-    ['microbiology',  'Media Sterility Test',    'Test sterility of prepared media',        'weekly',    '1',     'checkbox', 1, 2],
-    ['microbiology',  'Autoclave Validation',    'Validate autoclave cycle',                'weekly',    '1,4',   'checkbox', 0, 3],
-    ['microbiology',  'Antibiotic Disc Check',   'Check antibiotic disc potency',           'monthly',   null,    'checkbox', 0, 4],
-  ];
-  for (const p of params) insert.run(...p);
 }
 
 // ── Users ─────────────────────────────────────────────────────────
@@ -132,11 +104,19 @@ function listParameters(department) {
 function allParameters() {
   return getDb().prepare('SELECT * FROM parameters ORDER BY department, sort_order, id').all();
 }
-function insertParameter({ department, name, description, frequency, daysOfWeek, dayOfMonth, entryType, unit, critical, sortOrder }) {
+function insertParameter({ department, name, description, scheduleType, frequency, daysOfWeek, dayOfMonth, specificDates, entryType, unit, critical, sortOrder }) {
   return getDb().prepare(`
-    INSERT INTO parameters (department, name, description, frequency, days_of_week, day_of_month, entry_type, unit, critical, sort_order)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(department, name, description || null, frequency, daysOfWeek || null, dayOfMonth || null, entryType || 'checkbox', unit || null, critical ? 1 : 0, sortOrder || 0);
+    INSERT INTO parameters (department, name, description, schedule_type, frequency, days_of_week, day_of_month, specific_dates, entry_type, unit, critical, sort_order)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    department, name, description || null,
+    scheduleType || 'frequency',
+    frequency || null,
+    daysOfWeek || null, dayOfMonth || null,
+    specificDates || null,
+    entryType || 'checkbox', unit || null,
+    critical ? 1 : 0, sortOrder || 0
+  );
 }
 function updateParameter(id, fields) {
   const cols = Object.keys(fields).map(k => `${k} = ?`).join(', ');

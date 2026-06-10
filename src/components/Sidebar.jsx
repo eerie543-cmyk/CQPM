@@ -3,9 +3,9 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 
 const DEPTS = [
-  { id: 'serology',     label: 'Serology',         color: 'bg-blue-500' },
-  { id: 'molecularBio', label: 'Molecular Biology', color: 'bg-violet-500' },
-  { id: 'microbiology', label: 'Microbiology',      color: 'bg-emerald-500' },
+  { id: 'serology',     label: 'Serology',         color: 'bg-red-500'    },
+  { id: 'molecularBio', label: 'Molecular Biology', color: 'bg-sky-500'    },
+  { id: 'microbiology', label: 'Microbiology',      color: 'bg-yellow-500' },
 ];
 
 const NAV = [

@@ -12,10 +12,10 @@ const isDev = !app.isPackaged;
 
 function createWindow() {
   const win = new BrowserWindow({
-    width: 1280,
-    height: 800,
-    minWidth: 1024,
-    minHeight: 640,
+    width: 1440,
+    height: 900,
+    minWidth: 1100,
+    minHeight: 720,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -175,8 +175,12 @@ ipcMain.handle('params:create', (_e, { token, data } = {}) => {
   let payload;
   try { payload = verifyToken(token); } catch { return { error: 'Session expired.' }; }
   if (payload.role !== 'admin') return { error: 'Unauthorized.' };
-  if (!data?.name || !data?.department || !data?.frequency)
-    return { error: 'Name, department and frequency are required.' };
+  if (!data?.name || !data?.department)
+    return { error: 'Name and department are required.' };
+  if (data.scheduleType !== 'specific' && !data.frequency)
+    return { error: 'Frequency is required for frequency-based parameters.' };
+  if (data.scheduleType === 'specific' && !data.specificDates)
+    return { error: 'At least one specific date is required.' };
   const result = insertParameter(data);
   return { success: true, id: result.lastInsertRowid };
 });
