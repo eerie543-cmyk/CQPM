@@ -46,6 +46,24 @@ app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
 
+// ── Window controls (frameless titlebar) ──────────────────────────
+ipcMain.handle('window:minimize', (e) => {
+  BrowserWindow.fromWebContents(e.sender)?.minimize();
+});
+ipcMain.handle('window:toggle-maximize', (e) => {
+  const w = BrowserWindow.fromWebContents(e.sender);
+  if (!w) return false;
+  if (w.isMaximized()) { w.unmaximize(); return false; }
+  w.maximize();
+  return true;
+});
+ipcMain.handle('window:close', (e) => {
+  BrowserWindow.fromWebContents(e.sender)?.close();
+});
+ipcMain.handle('window:is-maximized', (e) =>
+  BrowserWindow.fromWebContents(e.sender)?.isMaximized() ?? false
+);
+
 // ── Auth: Login ───────────────────────────────────────────────────
 ipcMain.handle('auth:login', async (_e, { username, password } = {}) => {
   if (!username?.trim() || !password) return { error: 'Username and password are required.' };

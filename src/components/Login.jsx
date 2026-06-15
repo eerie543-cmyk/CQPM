@@ -30,7 +30,7 @@ export default function Login({ onMustChangePassword }) {
   }
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-4">
+    <div className="h-full bg-background flex items-center justify-center p-4">
 
       {/* Background radial glow */}
       <div

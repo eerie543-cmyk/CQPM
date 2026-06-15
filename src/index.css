@@ -48,4 +48,12 @@
 @layer base {
   * { @apply border-border; }
   body { @apply bg-background text-foreground; font-feature-settings: "rlig" 1, "calt" 1; }
+
+  /* Pointer on all clickable buttons; not-allowed on disabled */
+  button:not(:disabled) { cursor: pointer; }
+  button:disabled { cursor: not-allowed; }
+
+  /* Inputs keep the text cursor; selects get pointer */
+  input, textarea { cursor: text; }
+  select { cursor: pointer; }
 }

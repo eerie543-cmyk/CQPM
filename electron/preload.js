@@ -20,4 +20,10 @@ contextBridge.exposeInMainWorld('cqpm', {
     getRange: (token, dept, from, to) => ipcRenderer.invoke('entries:get-range', { token, dept, from, to }),
     save:     (token, entry)          => ipcRenderer.invoke('entries:save',      { token, entry }),
   },
+  win: {
+    minimize:       () => ipcRenderer.invoke('window:minimize'),
+    toggleMaximize: () => ipcRenderer.invoke('window:toggle-maximize'),
+    close:          () => ipcRenderer.invoke('window:close'),
+    isMaximized:    () => ipcRenderer.invoke('window:is-maximized'),
+  },
 });

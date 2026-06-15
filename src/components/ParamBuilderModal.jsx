@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { X, Loader2, ChevronLeft, ChevronRight, CalendarDays, RefreshCw } from 'lucide-react';
+import { X, Plus, Loader2, ChevronLeft, ChevronRight, CalendarDays, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 
@@ -158,7 +158,9 @@ export default function ParamBuilderModal({ dept, existing, onSave, onClose }) {
     name:          existing?.name          ?? '',
     description:   existing?.description   ?? '',
     department:    existing?.department    ?? dept ?? 'serology',
-    scheduleType:  existing?.schedule_type ?? 'frequency',
+    // Calendar-first: new parameters open on the date picker. The "+ Frequency"
+    // button switches to a repeating pattern instead.
+    scheduleType:  existing?.schedule_type ?? 'specific',
     // Frequency fields
     frequency:     existing?.frequency     ?? 'daily',
     daysOfWeek:    existing?.days_of_week  ? existing.days_of_week.split(',') : [],
@@ -287,23 +289,9 @@ export default function ParamBuilderModal({ dept, existing, onSave, onClose }) {
               className="h-9 rounded-md border bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring w-full" />
           </Field>
 
-          {/* ── Schedule type toggle ── */}
-          <Field label="Schedule Type">
+          {/* ── Schedule type toggle (calendar first, frequency via +) ── */}
+          <Field label="When is it due?">
             <div className="grid grid-cols-2 gap-2">
-              <button type="button"
-                onClick={() => set('scheduleType', 'frequency')}
-                className={cn(
-                  'flex items-center gap-2 h-10 px-3 rounded-lg border text-xs font-medium transition-colors',
-                  form.scheduleType === 'frequency'
-                    ? 'bg-primary/10 border-primary/40 text-primary'
-                    : 'hover:bg-muted text-muted-foreground border-border'
-                )}>
-                <RefreshCw className="w-3.5 h-3.5 flex-shrink-0" />
-                <div className="text-left">
-                  <div className="font-semibold">Frequency</div>
-                  <div className="text-[9px] opacity-70">Repeats on a pattern</div>
-                </div>
-              </button>
               <button type="button"
                 onClick={() => set('scheduleType', 'specific')}
                 className={cn(
@@ -314,8 +302,25 @@ export default function ParamBuilderModal({ dept, existing, onSave, onClose }) {
                 )}>
                 <CalendarDays className="w-3.5 h-3.5 flex-shrink-0" />
                 <div className="text-left">
-                  <div className="font-semibold">Specific Dates</div>
-                  <div className="text-[9px] opacity-70">Pick exact calendar days</div>
+                  <div className="font-semibold">Pick Dates</div>
+                  <div className="text-[9px] opacity-70">Choose days on a calendar</div>
+                </div>
+              </button>
+              <button type="button"
+                onClick={() => set('scheduleType', 'frequency')}
+                className={cn(
+                  'flex items-center gap-2 h-10 px-3 rounded-lg border text-xs font-medium transition-colors',
+                  form.scheduleType === 'frequency'
+                    ? 'bg-primary/10 border-primary/40 text-primary'
+                    : 'hover:bg-muted text-muted-foreground border-border'
+                )}>
+                <span className="relative flex-shrink-0">
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <Plus className="w-2 h-2 absolute -top-1 -right-1" />
+                </span>
+                <div className="text-left">
+                  <div className="font-semibold">+ Frequency</div>
+                  <div className="text-[9px] opacity-70">Repeats on a pattern</div>
                 </div>
               </button>
             </div>
