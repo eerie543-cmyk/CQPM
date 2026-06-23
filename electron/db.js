@@ -1,263 +1,188 @@
-const Database = require('better-sqlite3');
-const path = require('path');
-const { app } = require('electron');
+// Data layer — backed by the shared Supabase (Postgres) database.
+// The Electron main process talks to Supabase with the SERVICE-ROLE key, which
+// bypasses row-level security. That key lives only here (backend side) and is
+// never exposed to the renderer. Custom JWT auth still gates who may call what.
+
+// Electron's main process runs on Node 20, which has no built-in WebSocket.
+// The Supabase client always loads its realtime module (even when we only use
+// the database), and that module needs a WebSocket. Provide the `ws` library.
+if (!globalThis.WebSocket) {
+  globalThis.WebSocket = require('ws');
+}
+
+const { createClient } = require('@supabase/supabase-js');
 const bcrypt = require('bcryptjs');
 
-const DB_PATH = path.join(app.getPath('userData'), 'cqpm.db');
-let _db = null;
-
-function getDb() {
-  if (_db) return _db;
-  _db = new Database(DB_PATH);
-  _db.pragma('journal_mode = WAL');
-  _db.pragma('foreign_keys = ON');
-  initSchema(_db);
-  return _db;
+let _sb = null;
+function sb() {
+  if (_sb) return _sb;
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) {
+    throw new Error('Supabase is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env');
+  }
+  _sb = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+  return _sb;
 }
 
-function ensureColumn(db, table, col, ddl) {
-  const cols = db.prepare(`PRAGMA table_info(${table})`).all();
-  if (!cols.some(c => c.name === col)) {
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
-  }
+// UTC "YYYY-MM-DD HH:MM:SS" — matches the format the app already parses.
+function nowStr() {
+  return new Date().toISOString().slice(0, 19).replace('T', ' ');
 }
 
-function initSchema(db) {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS users (
-      id                   INTEGER PRIMARY KEY AUTOINCREMENT,
-      username             TEXT    NOT NULL UNIQUE COLLATE NOCASE,
-      password_hash        TEXT    NOT NULL,
-      role                 TEXT    NOT NULL CHECK(role IN ('admin','staff')),
-      department           TEXT    CHECK(department IN ('serology','molecularBio','microbiology') OR department IS NULL),
-      display_name         TEXT    NOT NULL,
-      must_change_password INTEGER NOT NULL DEFAULT 0,
-      created_at           TEXT    NOT NULL DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS parameters (
-      id             INTEGER PRIMARY KEY AUTOINCREMENT,
-      department     TEXT    NOT NULL CHECK(department IN ('serology','molecularBio','microbiology')),
-      name           TEXT    NOT NULL,
-      description    TEXT,
-      schedule_type  TEXT    NOT NULL DEFAULT 'frequency' CHECK(schedule_type IN ('frequency','specific')),
-      frequency      TEXT    CHECK(frequency IN ('daily','weekly','biweekly','monthly','quarterly','yearly')),
-      days_of_week   TEXT,
-      day_of_month   INTEGER,
-      specific_dates TEXT,
-      entry_type     TEXT    NOT NULL DEFAULT 'checkbox' CHECK(entry_type IN ('checkbox','numeric','text')),
-      unit           TEXT,
-      critical       INTEGER NOT NULL DEFAULT 0,
-      active         INTEGER NOT NULL DEFAULT 1,
-      sort_order     INTEGER NOT NULL DEFAULT 0,
-      created_at     TEXT    NOT NULL DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS entries (
-      id            INTEGER PRIMARY KEY AUTOINCREMENT,
-      parameter_id  INTEGER NOT NULL REFERENCES parameters(id) ON DELETE CASCADE,
-      slot_date     TEXT    NOT NULL,
-      status        TEXT    NOT NULL CHECK(status IN ('done','late','missed')) DEFAULT 'done',
-      value         TEXT,
-      notes         TEXT,
-      done_by_id    INTEGER NOT NULL REFERENCES users(id),
-      done_by_name  TEXT    NOT NULL,
-      department    TEXT    NOT NULL,
-      created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
-      UNIQUE(parameter_id, slot_date)
-    );
-
-    -- End-of-shift sign-off / approval lifecycle (one row per department per day)
-    CREATE TABLE IF NOT EXISTS day_signoffs (
-      id                INTEGER PRIMARY KEY AUTOINCREMENT,
-      department        TEXT    NOT NULL,
-      slot_date         TEXT    NOT NULL,
-      status            TEXT    NOT NULL CHECK(status IN ('submitted','approved','reopened')) DEFAULT 'submitted',
-      submitted_by_id   INTEGER,
-      submitted_by_name TEXT,
-      submitted_at      TEXT,
-      approved_by_id    INTEGER,
-      approved_by_name  TEXT,
-      approved_at       TEXT,
-      reopened_by_name  TEXT,
-      reopened_at       TEXT,
-      UNIQUE(department, slot_date)
-    );
-
-    -- Permanent month-end closure (one row per department per month)
-    CREATE TABLE IF NOT EXISTS month_closures (
-      id             INTEGER PRIMARY KEY AUTOINCREMENT,
-      department     TEXT    NOT NULL,
-      month          TEXT    NOT NULL,                -- YYYY-MM
-      closed_by_id   INTEGER,
-      closed_by_name TEXT,
-      closed_at      TEXT    NOT NULL DEFAULT (datetime('now')),
-      UNIQUE(department, month)
-    );
-  `);
-
-  // ── Lightweight migrations (add columns without dropping the DB) ──
-  ensureColumn(db, 'parameters', 'min_value', 'min_value REAL');
-  ensureColumn(db, 'parameters', 'max_value', 'max_value REAL');
-
-  // Seed default admin
-  const count = db.prepare('SELECT COUNT(*) AS c FROM users').get();
-  if (count.c === 0) {
-    const hash = bcrypt.hashSync('12345', 12);
-    db.prepare(`
-      INSERT INTO users (username, password_hash, role, department, display_name, must_change_password)
-      VALUES ('archit', ?, 'admin', NULL, 'Archit', 0)
-    `).run(hash);
+// Throw on a Supabase error so callers' try/catch behave like the old sync code.
+function must(res) {
+  if (res.error) {
+    const e = new Error(res.error.code === '23505' ? 'UNIQUE' : res.error.message);
+    e.code = res.error.code;
+    throw e;
   }
+  return res.data;
+}
 
+// Seed the default admin once (called on startup).
+async function ensureSeed() {
+  const { count, error } = await sb().from('users').select('*', { count: 'exact', head: true });
+  if (error) throw error;
+  if (count && count > 0) return;
+  const hash = bcrypt.hashSync('12345', 12);
+  await sb().from('users').insert({
+    username: 'archit', password_hash: hash, role: 'admin',
+    department: null, display_name: 'Archit', must_change_password: 0,
+    created_at: nowStr(),
+  });
 }
 
 // ── Users ─────────────────────────────────────────────────────────
-function findByUsername(username) {
-  return getDb().prepare('SELECT * FROM users WHERE username = ? COLLATE NOCASE').get(username);
+async function findByUsername(username) {
+  const data = must(await sb().from('users').select('*').eq('username', username.toLowerCase()).maybeSingle());
+  return data || undefined;
 }
-function listUsers() {
-  return getDb().prepare(
-    'SELECT id, username, role, department, display_name, created_at FROM users ORDER BY created_at'
-  ).all();
+async function listUsers() {
+  return must(await sb().from('users')
+    .select('id, username, role, department, display_name, created_at')
+    .order('created_at', { ascending: true }));
 }
-function insertUser({ username, passwordHash, role, department, displayName, mustChange }) {
-  return getDb().prepare(`
-    INSERT INTO users (username, password_hash, role, department, display_name, must_change_password)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(username.toLowerCase(), passwordHash, role, department || null, displayName, mustChange ? 1 : 0);
+async function insertUser({ username, passwordHash, role, department, displayName, mustChange }) {
+  return must(await sb().from('users').insert({
+    username: username.toLowerCase(), password_hash: passwordHash, role,
+    department: department || null, display_name: displayName,
+    must_change_password: mustChange ? 1 : 0, created_at: nowStr(),
+  }));
 }
-function setPasswordHash(userId, hash) {
-  getDb().prepare('UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?').run(hash, userId);
+async function setPasswordHash(userId, hash) {
+  must(await sb().from('users').update({ password_hash: hash, must_change_password: 0 }).eq('id', userId));
 }
-function deleteUser(userId) {
-  getDb().prepare('DELETE FROM users WHERE id = ?').run(userId);
+async function deleteUser(userId) {
+  must(await sb().from('users').delete().eq('id', userId));
 }
 
 // ── Parameters ────────────────────────────────────────────────────
-function listParameters(department) {
-  return getDb().prepare(
-    'SELECT * FROM parameters WHERE department = ? AND active = 1 ORDER BY sort_order, id'
-  ).all(department);
+async function listParameters(department) {
+  return must(await sb().from('parameters').select('*')
+    .eq('department', department).eq('active', 1)
+    .order('sort_order', { ascending: true }).order('id', { ascending: true }));
 }
-function allParameters() {
-  return getDb().prepare('SELECT * FROM parameters WHERE active = 1 ORDER BY department, sort_order, id').all();
+async function allParameters() {
+  return must(await sb().from('parameters').select('*').eq('active', 1)
+    .order('department', { ascending: true })
+    .order('sort_order', { ascending: true }).order('id', { ascending: true }));
 }
-function insertParameter({ department, name, description, scheduleType, frequency, daysOfWeek, dayOfMonth, specificDates, entryType, unit, minValue, maxValue, critical, sortOrder }) {
-  return getDb().prepare(`
-    INSERT INTO parameters (department, name, description, schedule_type, frequency, days_of_week, day_of_month, specific_dates, entry_type, unit, min_value, max_value, critical, sort_order)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    department, name, description || null,
-    scheduleType || 'frequency',
-    frequency || null,
-    daysOfWeek || null, dayOfMonth || null,
-    specificDates || null,
-    entryType || 'checkbox', unit || null,
-    minValue ?? null, maxValue ?? null,
-    critical ? 1 : 0, sortOrder || 0
-  );
+async function insertParameter({ department, name, description, scheduleType, frequency, daysOfWeek, dayOfMonth, specificDates, entryType, unit, minValue, maxValue, critical, sortOrder }) {
+  const data = must(await sb().from('parameters').insert({
+    department, name, description: description || null,
+    schedule_type: scheduleType || 'frequency',
+    frequency: frequency || null,
+    days_of_week: daysOfWeek || null, day_of_month: dayOfMonth || null,
+    specific_dates: specificDates || null,
+    entry_type: entryType || 'checkbox', unit: unit || null,
+    min_value: minValue ?? null, max_value: maxValue ?? null,
+    critical: critical ? 1 : 0, sort_order: sortOrder || 0,
+    created_at: nowStr(),
+  }).select('id').single());
+  return { lastInsertRowid: data.id };
 }
-function updateParameter(id, fields) {
-  const cols = Object.keys(fields).map(k => `${k} = ?`).join(', ');
-  return getDb().prepare(`UPDATE parameters SET ${cols} WHERE id = ?`).run(...Object.values(fields), id);
+async function updateParameter(id, fields) {
+  must(await sb().from('parameters').update(fields).eq('id', id));
 }
-function deleteParameter(id) {
-  getDb().prepare('UPDATE parameters SET active = 0 WHERE id = ?').run(id);
+async function deleteParameter(id) {
+  must(await sb().from('parameters').update({ active: 0 }).eq('id', id));
 }
 
 // ── Entries ───────────────────────────────────────────────────────
-function getEntriesForRange(department, fromDate, toDate) {
-  return getDb().prepare(`
-    SELECT e.* FROM entries e
-    JOIN parameters p ON e.parameter_id = p.id
-    WHERE p.department = ? AND e.slot_date BETWEEN ? AND ?
-    ORDER BY e.slot_date
-  `).all(department, fromDate, toDate);
+async function getEntriesForRange(department, fromDate, toDate) {
+  // entries.department mirrors the parameter's department at write time,
+  // so we can filter directly without a join.
+  return must(await sb().from('entries').select('*')
+    .eq('department', department)
+    .gte('slot_date', fromDate).lte('slot_date', toDate)
+    .order('slot_date', { ascending: true }));
 }
-function upsertEntry({ parameterId, slotDate, status, value, notes, doneById, doneByName, department }) {
-  return getDb().prepare(`
-    INSERT INTO entries (parameter_id, slot_date, status, value, notes, done_by_id, done_by_name, department)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(parameter_id, slot_date) DO UPDATE SET
-      status = excluded.status, value = excluded.value,
-      notes = excluded.notes, done_by_id = excluded.done_by_id,
-      done_by_name = excluded.done_by_name, created_at = datetime('now')
-  `).run(parameterId, slotDate, status || 'done', value || null, notes || null, doneById, doneByName, department);
+async function upsertEntry({ parameterId, slotDate, status, value, notes, doneById, doneByName, department }) {
+  must(await sb().from('entries').upsert({
+    parameter_id: parameterId, slot_date: slotDate,
+    status: status || 'done', value: value || null, notes: notes || null,
+    done_by_id: doneById, done_by_name: doneByName, department,
+    created_at: nowStr(),
+  }, { onConflict: 'parameter_id,slot_date' }));
 }
 
-// ── Day sign-offs (submit / approve / reopen) ─────────────────────
-function getSignoff(department, slotDate) {
-  return getDb().prepare(
-    'SELECT * FROM day_signoffs WHERE department = ? AND slot_date = ?'
-  ).get(department, slotDate);
+// ── Day sign-offs ─────────────────────────────────────────────────
+async function getSignoff(department, slotDate) {
+  return must(await sb().from('day_signoffs').select('*')
+    .eq('department', department).eq('slot_date', slotDate).maybeSingle()) || undefined;
 }
-function getSignoffsForRange(department, fromDate, toDate) {
-  return getDb().prepare(
-    'SELECT * FROM day_signoffs WHERE department = ? AND slot_date BETWEEN ? AND ?'
-  ).all(department, fromDate, toDate);
+async function getSignoffsForRange(department, fromDate, toDate) {
+  return must(await sb().from('day_signoffs').select('*')
+    .eq('department', department)
+    .gte('slot_date', fromDate).lte('slot_date', toDate));
 }
-function submitDay(department, slotDate, userId, userName) {
-  return getDb().prepare(`
-    INSERT INTO day_signoffs (department, slot_date, status, submitted_by_id, submitted_by_name, submitted_at)
-    VALUES (?, ?, 'submitted', ?, ?, datetime('now'))
-    ON CONFLICT(department, slot_date) DO UPDATE SET
-      status = 'submitted', submitted_by_id = excluded.submitted_by_id,
-      submitted_by_name = excluded.submitted_by_name, submitted_at = datetime('now'),
-      approved_by_id = NULL, approved_by_name = NULL, approved_at = NULL
-  `).run(department, slotDate, userId, userName);
+async function submitDay(department, slotDate, userId, userName) {
+  must(await sb().from('day_signoffs').upsert({
+    department, slot_date: slotDate, status: 'submitted',
+    submitted_by_id: userId, submitted_by_name: userName, submitted_at: nowStr(),
+    approved_by_id: null, approved_by_name: null, approved_at: null,
+  }, { onConflict: 'department,slot_date' }));
 }
-function approveDay(department, slotDate, userId, userName) {
-  return getDb().prepare(`
-    UPDATE day_signoffs SET status = 'approved',
-      approved_by_id = ?, approved_by_name = ?, approved_at = datetime('now')
-    WHERE department = ? AND slot_date = ?
-  `).run(userId, userName, department, slotDate);
+async function approveDay(department, slotDate, userId, userName) {
+  must(await sb().from('day_signoffs')
+    .update({ status: 'approved', approved_by_id: userId, approved_by_name: userName, approved_at: nowStr() })
+    .eq('department', department).eq('slot_date', slotDate));
 }
-function reopenDay(department, slotDate, userName) {
-  return getDb().prepare(`
-    UPDATE day_signoffs SET status = 'reopened',
-      reopened_by_name = ?, reopened_at = datetime('now'),
-      approved_by_id = NULL, approved_by_name = NULL, approved_at = NULL
-    WHERE department = ? AND slot_date = ?
-  `).run(userName, department, slotDate);
+async function reopenDay(department, slotDate, userName) {
+  must(await sb().from('day_signoffs')
+    .update({ status: 'reopened', reopened_by_name: userName, reopened_at: nowStr(),
+              approved_by_id: null, approved_by_name: null, approved_at: null })
+    .eq('department', department).eq('slot_date', slotDate));
 }
-function listPendingSignoffs() {
-  return getDb().prepare(
-    "SELECT * FROM day_signoffs WHERE status = 'submitted' ORDER BY slot_date DESC, department"
-  ).all();
+async function listPendingSignoffs() {
+  return must(await sb().from('day_signoffs').select('*').eq('status', 'submitted')
+    .order('slot_date', { ascending: false }).order('department', { ascending: true }));
 }
 
 // ── Month closures ────────────────────────────────────────────────
-function getClosure(department, month) {
-  return getDb().prepare(
-    'SELECT * FROM month_closures WHERE department = ? AND month = ?'
-  ).get(department, month);
+async function getClosure(department, month) {
+  return must(await sb().from('month_closures').select('*')
+    .eq('department', department).eq('month', month).maybeSingle()) || undefined;
 }
-function listClosures(department) {
-  return getDb().prepare(
-    'SELECT * FROM month_closures WHERE department = ? ORDER BY month DESC'
-  ).all(department);
+async function listClosures(department) {
+  return must(await sb().from('month_closures').select('*')
+    .eq('department', department).order('month', { ascending: false }));
 }
-function closeMonth(department, month, userId, userName) {
-  return getDb().prepare(`
-    INSERT INTO month_closures (department, month, closed_by_id, closed_by_name)
-    VALUES (?, ?, ?, ?)
-    ON CONFLICT(department, month) DO NOTHING
-  `).run(department, month, userId, userName);
+async function closeMonth(department, month, userId, userName) {
+  must(await sb().from('month_closures').upsert({
+    department, month, closed_by_id: userId, closed_by_name: userName, closed_at: nowStr(),
+  }, { onConflict: 'department,month', ignoreDuplicates: true }));
 }
-function reopenMonth(department, month) {
-  return getDb().prepare(
-    'DELETE FROM month_closures WHERE department = ? AND month = ?'
-  ).run(department, month);
+async function reopenMonth(department, month) {
+  must(await sb().from('month_closures').delete().eq('department', department).eq('month', month));
 }
 
 // ── Lock guard ────────────────────────────────────────────────────
 // Returns a reason string if the day cannot be edited by this role, else null.
-//   'month-closed' | 'approved' | 'submitted' | null
-function dayLockReason(department, slotDate, role) {
-  if (getClosure(department, slotDate.slice(0, 7))) return 'month-closed';
-  const s = getSignoff(department, slotDate);
+async function dayLockReason(department, slotDate, role) {
+  if (await getClosure(department, slotDate.slice(0, 7))) return 'month-closed';
+  const s = await getSignoff(department, slotDate);
   if (s) {
     if (s.status === 'approved')  return 'approved';
     if (s.status === 'submitted') return role === 'admin' ? null : 'submitted';
@@ -267,6 +192,7 @@ function dayLockReason(department, slotDate, role) {
 }
 
 module.exports = {
+  ensureSeed,
   findByUsername, listUsers, insertUser, setPasswordHash, deleteUser,
   listParameters, allParameters, insertParameter, updateParameter, deleteParameter,
   getEntriesForRange, upsertEntry,

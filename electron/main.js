@@ -1,9 +1,11 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const bcrypt = require('bcryptjs');
 const ExcelJS = require('exceljs');
 const { buildComplianceWorkbook } = require('./excelReport');
 const {
+  ensureSeed,
   findByUsername, listUsers, insertUser, setPasswordHash, deleteUser,
   listParameters, allParameters, insertParameter, updateParameter, deleteParameter,
   getEntriesForRange, upsertEntry,
@@ -40,7 +42,14 @@ function createWindow() {
   win.once('ready-to-show', () => win.show());
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(async () => {
+  try {
+    await ensureSeed();
+  } catch (err) {
+    console.error('[CQPM] Database seed/connection failed:', err.message);
+  }
+  createWindow();
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
@@ -72,7 +81,9 @@ ipcMain.handle('window:is-maximized', (e) =>
 ipcMain.handle('auth:login', async (_e, { username, password } = {}) => {
   if (!username?.trim() || !password) return { error: 'Username and password are required.' };
 
-  const user = findByUsername(username.trim());
+  let user;
+  try { user = await findByUsername(username.trim()); }
+  catch (err) { return { error: 'Cannot reach the database. Check your connection.' }; }
   if (!user) return { error: 'Invalid username or password.' };
 
   const valid = await bcrypt.compare(password, user.password_hash);
@@ -110,7 +121,7 @@ ipcMain.handle('auth:change-password', async (_e, { token, oldPassword, newPassw
   let payload;
   try { payload = verifyToken(token); } catch { return { error: 'Session expired.' }; }
 
-  const user = findByUsername(payload.username);
+  const user = await findByUsername(payload.username);
   if (!user) return { error: 'User not found.' };
 
   const valid = await bcrypt.compare(oldPassword, user.password_hash);
@@ -120,19 +131,17 @@ ipcMain.handle('auth:change-password', async (_e, { token, oldPassword, newPassw
     return { error: 'New password must be at least 8 characters.' };
 
   const hash = await bcrypt.hash(newPassword, 12);
-  setPasswordHash(user.id, hash);
+  await setPasswordHash(user.id, hash);
   return { success: true };
 });
 
 // ── Admin: List Users ─────────────────────────────────────────────
-ipcMain.handle('auth:list-users', (_e, token) => {
-  try {
-    const payload = verifyToken(token);
-    if (payload.role !== 'admin') return { error: 'Unauthorized.' };
-    return { users: listUsers() };
-  } catch {
-    return { error: 'Session expired.' };
-  }
+ipcMain.handle('auth:list-users', async (_e, token) => {
+  let payload;
+  try { payload = verifyToken(token); } catch { return { error: 'Session expired.' }; }
+  if (payload.role !== 'admin') return { error: 'Unauthorized.' };
+  try { return { users: await listUsers() }; }
+  catch (err) { return { error: err.message }; }
 });
 
 // ── Admin: Create User ────────────────────────────────────────────
@@ -152,7 +161,7 @@ ipcMain.handle('auth:create-user', async (_e, { token, userData } = {}) => {
 
   try {
     const hash = await bcrypt.hash(password, 12);
-    insertUser({
+    await insertUser({
       username:     username.trim(),
       passwordHash: hash,
       role,
@@ -169,31 +178,33 @@ ipcMain.handle('auth:create-user', async (_e, { token, userData } = {}) => {
 });
 
 // ── Admin: Delete User ────────────────────────────────────────────
-ipcMain.handle('auth:delete-user', (_e, { token, userId } = {}) => {
+ipcMain.handle('auth:delete-user', async (_e, { token, userId } = {}) => {
   let payload;
   try { payload = verifyToken(token); } catch { return { error: 'Session expired.' }; }
   if (payload.role !== 'admin') return { error: 'Unauthorized.' };
   if (payload.sub === userId) return { error: 'Cannot delete your own account.' };
-  deleteUser(userId);
-  return { success: true };
+  try { await deleteUser(userId); return { success: true }; }
+  catch (err) { return { error: err.message }; }
 });
 
 // ── Parameters: List (by dept) ────────────────────────────────────
-ipcMain.handle('params:list', (_e, { token, dept } = {}) => {
+ipcMain.handle('params:list', async (_e, { token, dept } = {}) => {
   try { verifyToken(token); } catch { return { error: 'Session expired.' }; }
-  return { params: listParameters(dept) };
+  try { return { params: await listParameters(dept) }; }
+  catch (err) { return { error: err.message }; }
 });
 
 // ── Parameters: All (admin) ───────────────────────────────────────
-ipcMain.handle('params:all', (_e, { token } = {}) => {
+ipcMain.handle('params:all', async (_e, { token } = {}) => {
   let payload;
   try { payload = verifyToken(token); } catch { return { error: 'Session expired.' }; }
   if (payload.role !== 'admin') return { error: 'Unauthorized.' };
-  return { params: allParameters() };
+  try { return { params: await allParameters() }; }
+  catch (err) { return { error: err.message }; }
 });
 
 // ── Parameters: Create (admin) ────────────────────────────────────
-ipcMain.handle('params:create', (_e, { token, data } = {}) => {
+ipcMain.handle('params:create', async (_e, { token, data } = {}) => {
   let payload;
   try { payload = verifyToken(token); } catch { return { error: 'Session expired.' }; }
   if (payload.role !== 'admin') return { error: 'Unauthorized.' };
@@ -203,32 +214,35 @@ ipcMain.handle('params:create', (_e, { token, data } = {}) => {
     return { error: 'Frequency is required for frequency-based parameters.' };
   if (data.scheduleType === 'specific' && !data.specificDates)
     return { error: 'At least one specific date is required.' };
-  const result = insertParameter(data);
-  return { success: true, id: result.lastInsertRowid };
+  try {
+    const result = await insertParameter(data);
+    return { success: true, id: result.lastInsertRowid };
+  } catch (err) { return { error: err.message }; }
 });
 
 // ── Parameters: Update (admin) ────────────────────────────────────
-ipcMain.handle('params:update', (_e, { token, id, fields } = {}) => {
+ipcMain.handle('params:update', async (_e, { token, id, fields } = {}) => {
   let payload;
   try { payload = verifyToken(token); } catch { return { error: 'Session expired.' }; }
   if (payload.role !== 'admin') return { error: 'Unauthorized.' };
-  updateParameter(id, fields);
-  return { success: true };
+  try { await updateParameter(id, fields); return { success: true }; }
+  catch (err) { return { error: err.message }; }
 });
 
 // ── Parameters: Remove (admin, soft delete) ───────────────────────
-ipcMain.handle('params:remove', (_e, { token, id } = {}) => {
+ipcMain.handle('params:remove', async (_e, { token, id } = {}) => {
   let payload;
   try { payload = verifyToken(token); } catch { return { error: 'Session expired.' }; }
   if (payload.role !== 'admin') return { error: 'Unauthorized.' };
-  deleteParameter(id);
-  return { success: true };
+  try { await deleteParameter(id); return { success: true }; }
+  catch (err) { return { error: err.message }; }
 });
 
 // ── Entries: Get range ────────────────────────────────────────────
-ipcMain.handle('entries:get-range', (_e, { token, dept, from, to } = {}) => {
+ipcMain.handle('entries:get-range', async (_e, { token, dept, from, to } = {}) => {
   try { verifyToken(token); } catch { return { error: 'Session expired.' }; }
-  return { entries: getEntriesForRange(dept, from, to) };
+  try { return { entries: await getEntriesForRange(dept, from, to) }; }
+  catch (err) { return { error: err.message }; }
 });
 
 // ── Entries: Save ─────────────────────────────────────────────────
@@ -237,95 +251,107 @@ const LOCK_MESSAGES = {
   'approved':     'This day has been approved and locked. An admin must reopen it to edit.',
   'submitted':    'This day was submitted for review and is locked. Ask an admin to reopen it.',
 };
-ipcMain.handle('entries:save', (_e, { token, entry } = {}) => {
+ipcMain.handle('entries:save', async (_e, { token, entry } = {}) => {
   let payload;
   try { payload = verifyToken(token); } catch { return { error: 'Session expired.' }; }
   if (!entry?.parameterId || !entry?.slotDate) return { error: 'Parameter and date required.' };
 
-  // Locking: block edits to submitted/approved/closed days
-  const lock = dayLockReason(entry.department, entry.slotDate, payload.role);
-  if (lock) return { error: LOCK_MESSAGES[lock] };
+  try {
+    // Locking: block edits to submitted/approved/closed days
+    const lock = await dayLockReason(entry.department, entry.slotDate, payload.role);
+    if (lock) return { error: LOCK_MESSAGES[lock] };
 
-  upsertEntry({ ...entry, doneById: payload.sub, doneByName: payload.displayName });
-  return { success: true };
+    await upsertEntry({ ...entry, doneById: payload.sub, doneByName: payload.displayName });
+    return { success: true };
+  } catch (err) { return { error: err.message }; }
 });
 
 // ── Sign-offs: range (for matrix lock indicators) ─────────────────
-ipcMain.handle('signoff:range', (_e, { token, dept, from, to } = {}) => {
+ipcMain.handle('signoff:range', async (_e, { token, dept, from, to } = {}) => {
   try { verifyToken(token); } catch { return { error: 'Session expired.' }; }
-  return { signoffs: getSignoffsForRange(dept, from, to), closures: listClosures(dept) };
+  try {
+    const [signoffs, closures] = await Promise.all([getSignoffsForRange(dept, from, to), listClosures(dept)]);
+    return { signoffs, closures };
+  } catch (err) { return { error: err.message }; }
 });
 
 // ── Sign-offs: get one day ────────────────────────────────────────
-ipcMain.handle('signoff:get', (_e, { token, dept, date } = {}) => {
+ipcMain.handle('signoff:get', async (_e, { token, dept, date } = {}) => {
   try { verifyToken(token); } catch { return { error: 'Session expired.' }; }
-  return { signoff: getSignoff(dept, date), closed: !!getClosure(dept, date.slice(0, 7)) };
+  try {
+    const [signoff, closure] = await Promise.all([getSignoff(dept, date), getClosure(dept, date.slice(0, 7))]);
+    return { signoff: signoff || null, closed: !!closure };
+  } catch (err) { return { error: err.message }; }
 });
 
 // ── Sign-offs: submit end-of-shift (staff or admin) ───────────────
-ipcMain.handle('signoff:submit', (_e, { token, dept, date } = {}) => {
+ipcMain.handle('signoff:submit', async (_e, { token, dept, date } = {}) => {
   let payload;
   try { payload = verifyToken(token); } catch { return { error: 'Session expired.' }; }
   if (!dept || !date) return { error: 'Department and date required.' };
-  if (getClosure(dept, date.slice(0, 7))) return { error: 'That month is already closed.' };
   // Staff can only sign off their own department
   if (payload.role === 'staff' && payload.department !== dept)
     return { error: 'You can only sign off your own department.' };
-  submitDay(dept, date, payload.sub, payload.displayName);
-  return { success: true };
+  try {
+    if (await getClosure(dept, date.slice(0, 7))) return { error: 'That month is already closed.' };
+    await submitDay(dept, date, payload.sub, payload.displayName);
+    return { success: true };
+  } catch (err) { return { error: err.message }; }
 });
 
 // ── Sign-offs: pending queue (admin) ──────────────────────────────
-ipcMain.handle('signoff:pending', (_e, { token } = {}) => {
+ipcMain.handle('signoff:pending', async (_e, { token } = {}) => {
   let payload;
   try { payload = verifyToken(token); } catch { return { error: 'Session expired.' }; }
   if (payload.role !== 'admin') return { error: 'Unauthorized.' };
-  return { pending: listPendingSignoffs() };
+  try { return { pending: await listPendingSignoffs() }; }
+  catch (err) { return { error: err.message }; }
 });
 
 // ── Sign-offs: approve (admin) ────────────────────────────────────
-ipcMain.handle('signoff:approve', (_e, { token, dept, date } = {}) => {
+ipcMain.handle('signoff:approve', async (_e, { token, dept, date } = {}) => {
   let payload;
   try { payload = verifyToken(token); } catch { return { error: 'Session expired.' }; }
   if (payload.role !== 'admin') return { error: 'Unauthorized.' };
-  approveDay(dept, date, payload.sub, payload.displayName);
-  return { success: true };
+  try { await approveDay(dept, date, payload.sub, payload.displayName); return { success: true }; }
+  catch (err) { return { error: err.message }; }
 });
 
 // ── Sign-offs: reopen (admin) ─────────────────────────────────────
-ipcMain.handle('signoff:reopen', (_e, { token, dept, date } = {}) => {
+ipcMain.handle('signoff:reopen', async (_e, { token, dept, date } = {}) => {
   let payload;
   try { payload = verifyToken(token); } catch { return { error: 'Session expired.' }; }
   if (payload.role !== 'admin') return { error: 'Unauthorized.' };
-  reopenDay(dept, date, payload.displayName);
-  return { success: true };
+  try { await reopenDay(dept, date, payload.displayName); return { success: true }; }
+  catch (err) { return { error: err.message }; }
 });
 
 // ── Month closures: list (admin) ──────────────────────────────────
-ipcMain.handle('closure:list', (_e, { token, dept } = {}) => {
+ipcMain.handle('closure:list', async (_e, { token, dept } = {}) => {
   let payload;
   try { payload = verifyToken(token); } catch { return { error: 'Session expired.' }; }
   if (payload.role !== 'admin') return { error: 'Unauthorized.' };
-  return { closures: listClosures(dept) };
+  try { return { closures: await listClosures(dept) }; }
+  catch (err) { return { error: err.message }; }
 });
 
 // ── Month closures: close (admin) ─────────────────────────────────
-ipcMain.handle('closure:close', (_e, { token, dept, month } = {}) => {
+ipcMain.handle('closure:close', async (_e, { token, dept, month } = {}) => {
   let payload;
   try { payload = verifyToken(token); } catch { return { error: 'Session expired.' }; }
   if (payload.role !== 'admin') return { error: 'Unauthorized.' };
   if (!dept || !month) return { error: 'Department and month required.' };
-  closeMonth(dept, month, payload.sub, payload.displayName);
-  return { success: true };
+  try { await closeMonth(dept, month, payload.sub, payload.displayName); return { success: true }; }
+  catch (err) { return { error: err.message }; }
 });
 
 // ── Month closures: reopen (admin) ────────────────────────────────
-ipcMain.handle('closure:reopen', (_e, { token, dept, month } = {}) => {
+ipcMain.handle('closure:reopen', async (_e, { token, dept, month } = {}) => {
   let payload;
   try { payload = verifyToken(token); } catch { return { error: 'Session expired.' }; }
   if (payload.role !== 'admin') return { error: 'Unauthorized.' };
-  reopenMonth(dept, month);
-  return { success: true };
+  try { await reopenMonth(dept, month); return { success: true }; }
+  catch (err) { return { error: err.message }; }
 });
 
 // ── Export: styled .xlsx compliance report (admin) ────────────────

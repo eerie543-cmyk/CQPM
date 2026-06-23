@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   CheckCircle2, Circle, AlertCircle, AlertTriangle, History,
-  Loader2, Lock, ClipboardCheck, ChevronRight, CalendarClock,
+  Loader2, Lock, ClipboardCheck, ChevronRight, ChevronDown, CalendarClock,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
@@ -46,6 +46,44 @@ function TaskRow({ param, entry, onClick, locked }) {
       <StatusChip status={entry?.status} oor={oor} />
       <ChevronRight className="w-3.5 h-3.5 text-muted-foreground/40 group-hover:text-muted-foreground transition-colors flex-shrink-0" />
     </button>
+  );
+}
+
+const fmtShort = (d) => new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+const fmtFull  = (d) => new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' });
+
+// One compact, collapsible row per overdue parameter (keeps the list minimal).
+function OverdueGroup({ param, dates, onPick }) {
+  const [open, setOpen] = useState(false);
+  const oldest = dates[dates.length - 1];
+  return (
+    <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 overflow-hidden">
+      <button onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-amber-500/10 transition-colors">
+        <CalendarClock className="w-3.5 h-3.5 text-amber-400/70 flex-shrink-0" />
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium truncate">{param.name}</p>
+          <p className="text-[11px] text-muted-foreground">
+            {dates.length} missed day{dates.length !== 1 ? 's' : ''} · oldest {fmtShort(oldest)}
+          </p>
+        </div>
+        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/20 flex-shrink-0">
+          {dates.length}
+        </span>
+        <ChevronDown className={cn('w-3.5 h-3.5 text-muted-foreground flex-shrink-0 transition-transform', open && 'rotate-180')} />
+      </button>
+      {open && (
+        <div className="border-t border-amber-500/15">
+          {dates.map(d => (
+            <button key={d} onClick={() => onPick(param, d)}
+              className="group w-full flex items-center gap-2 pl-9 pr-3 py-1.5 text-left hover:bg-amber-500/10 transition-colors border-t border-amber-500/10 first:border-t-0">
+              <span className="text-[11px] text-muted-foreground flex-1">Due {fmtFull(d)}</span>
+              <ChevronRight className="w-3 h-3 text-muted-foreground/40 group-hover:text-muted-foreground" />
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -117,6 +155,16 @@ export default function TodayPage({ dept }) {
     // Most recent first
     return items.sort((a, b) => (a.date < b.date ? 1 : -1));
   }, [params, entryMap, today]);
+
+  // Group overdue slots by parameter so the list stays short (one row each).
+  const overdueGroups = useMemo(() => {
+    const map = new Map();
+    for (const { param, date } of overdue) {
+      if (!map.has(param.id)) map.set(param.id, { param, dates: [] });
+      map.get(param.id).dates.push(date);
+    }
+    return [...map.values()];
+  }, [overdue]);
 
   function openTask(param, date) {
     const locked = date === today ? todayLocked : closed; // past days: locked only if month closed (approval lock handled server-side)
@@ -200,27 +248,12 @@ export default function TodayPage({ dept }) {
                   </h2>
                 </div>
                 <p className="text-[11px] text-muted-foreground -mt-1">
-                  These were scheduled on past days and never recorded. Clear them or mark them missed.
+                  Scheduled on past days and never recorded. Expand a row to clear or mark them missed.
                 </p>
                 <div className="flex flex-col gap-1.5">
-                  {overdue.slice(0, 40).map(({ param, date }) => (
-                    <button key={`${param.id}__${date}`} onClick={() => openTask(param, date)}
-                      className="group w-full flex items-center gap-3 px-3 py-2 rounded-lg border border-amber-500/20 bg-amber-500/5 text-left hover:bg-amber-500/10 transition-colors">
-                      <CalendarClock className="w-3.5 h-3.5 text-amber-400/70 flex-shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">{param.name}</p>
-                        <p className="text-[11px] text-muted-foreground">
-                          Due {new Date(date + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}
-                        </p>
-                      </div>
-                      <ChevronRight className="w-3.5 h-3.5 text-muted-foreground/40 group-hover:text-muted-foreground flex-shrink-0" />
-                    </button>
+                  {overdueGroups.map(g => (
+                    <OverdueGroup key={g.param.id} param={g.param} dates={g.dates} onPick={openTask} />
                   ))}
-                  {overdue.length > 40 && (
-                    <p className="text-[11px] text-muted-foreground text-center py-1">
-                      +{overdue.length - 40} more — use the Matrix to clear older ones.
-                    </p>
-                  )}
                 </div>
               </section>
             )}
