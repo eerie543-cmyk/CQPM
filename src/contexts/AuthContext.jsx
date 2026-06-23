@@ -10,6 +10,7 @@ export function AuthProvider({ children }) {
   const [user, setUser]           = useState(null);
   const [expiresAt, setExpiresAt] = useState(null);
   const [sessionWarn, setWarn]    = useState(false);
+  const [mustChange, setMustChange] = useState(false);
 
   const logoutTimer = useRef(null);
   const warnTimer   = useRef(null);
@@ -25,6 +26,7 @@ export function AuthProvider({ children }) {
     setUser(null);
     setExpiresAt(null);
     setWarn(false);
+    setMustChange(false);
   }, []);
 
   const login = useCallback(async (username, password) => {
@@ -41,8 +43,16 @@ export function AuthProvider({ children }) {
     logoutTimer.current = setTimeout(logout, SESSION_MS);
     warnTimer.current   = setTimeout(() => setWarn(true), SESSION_MS - WARN_BEFORE_MS);
 
+    setMustChange(!!result.mustChangePassword);
     return { success: true, mustChangePassword: result.mustChangePassword };
   }, [logout]);
+
+  // Change the signed-in user's password. Clears the must-change gate on success.
+  const changePassword = useCallback(async (oldPassword, newPassword) => {
+    const res = await window.cqpm.auth.changePassword({ token, oldPassword, newPassword });
+    if (res?.success) setMustChange(false);
+    return res ?? { error: 'Unexpected error.' };
+  }, [token]);
 
   const dismissWarn = useCallback(() => setWarn(false), []);
 
@@ -57,8 +67,10 @@ export function AuthProvider({ children }) {
       sessionWarn,
       isAuthenticated: !!token,
       isAdmin: user?.role === 'admin',
+      mustChangePassword: mustChange,
       login,
       logout,
+      changePassword,
       dismissWarn,
     }}>
       {children}

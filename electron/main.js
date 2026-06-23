@@ -1,10 +1,14 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const bcrypt = require('bcryptjs');
+const ExcelJS = require('exceljs');
+const { buildComplianceWorkbook } = require('./excelReport');
 const {
   findByUsername, listUsers, insertUser, setPasswordHash, deleteUser,
   listParameters, allParameters, insertParameter, updateParameter, deleteParameter,
   getEntriesForRange, upsertEntry,
+  getSignoff, getSignoffsForRange, submitDay, approveDay, reopenDay, listPendingSignoffs,
+  getClosure, listClosures, closeMonth, reopenMonth, dayLockReason,
 } = require('./db');
 const { signToken, verifyToken } = require('./auth');
 
@@ -228,10 +232,123 @@ ipcMain.handle('entries:get-range', (_e, { token, dept, from, to } = {}) => {
 });
 
 // ── Entries: Save ─────────────────────────────────────────────────
+const LOCK_MESSAGES = {
+  'month-closed': 'This month is closed. An admin must reopen the month to make changes.',
+  'approved':     'This day has been approved and locked. An admin must reopen it to edit.',
+  'submitted':    'This day was submitted for review and is locked. Ask an admin to reopen it.',
+};
 ipcMain.handle('entries:save', (_e, { token, entry } = {}) => {
   let payload;
   try { payload = verifyToken(token); } catch { return { error: 'Session expired.' }; }
   if (!entry?.parameterId || !entry?.slotDate) return { error: 'Parameter and date required.' };
+
+  // Locking: block edits to submitted/approved/closed days
+  const lock = dayLockReason(entry.department, entry.slotDate, payload.role);
+  if (lock) return { error: LOCK_MESSAGES[lock] };
+
   upsertEntry({ ...entry, doneById: payload.sub, doneByName: payload.displayName });
   return { success: true };
+});
+
+// ── Sign-offs: range (for matrix lock indicators) ─────────────────
+ipcMain.handle('signoff:range', (_e, { token, dept, from, to } = {}) => {
+  try { verifyToken(token); } catch { return { error: 'Session expired.' }; }
+  return { signoffs: getSignoffsForRange(dept, from, to), closures: listClosures(dept) };
+});
+
+// ── Sign-offs: get one day ────────────────────────────────────────
+ipcMain.handle('signoff:get', (_e, { token, dept, date } = {}) => {
+  try { verifyToken(token); } catch { return { error: 'Session expired.' }; }
+  return { signoff: getSignoff(dept, date), closed: !!getClosure(dept, date.slice(0, 7)) };
+});
+
+// ── Sign-offs: submit end-of-shift (staff or admin) ───────────────
+ipcMain.handle('signoff:submit', (_e, { token, dept, date } = {}) => {
+  let payload;
+  try { payload = verifyToken(token); } catch { return { error: 'Session expired.' }; }
+  if (!dept || !date) return { error: 'Department and date required.' };
+  if (getClosure(dept, date.slice(0, 7))) return { error: 'That month is already closed.' };
+  // Staff can only sign off their own department
+  if (payload.role === 'staff' && payload.department !== dept)
+    return { error: 'You can only sign off your own department.' };
+  submitDay(dept, date, payload.sub, payload.displayName);
+  return { success: true };
+});
+
+// ── Sign-offs: pending queue (admin) ──────────────────────────────
+ipcMain.handle('signoff:pending', (_e, { token } = {}) => {
+  let payload;
+  try { payload = verifyToken(token); } catch { return { error: 'Session expired.' }; }
+  if (payload.role !== 'admin') return { error: 'Unauthorized.' };
+  return { pending: listPendingSignoffs() };
+});
+
+// ── Sign-offs: approve (admin) ────────────────────────────────────
+ipcMain.handle('signoff:approve', (_e, { token, dept, date } = {}) => {
+  let payload;
+  try { payload = verifyToken(token); } catch { return { error: 'Session expired.' }; }
+  if (payload.role !== 'admin') return { error: 'Unauthorized.' };
+  approveDay(dept, date, payload.sub, payload.displayName);
+  return { success: true };
+});
+
+// ── Sign-offs: reopen (admin) ─────────────────────────────────────
+ipcMain.handle('signoff:reopen', (_e, { token, dept, date } = {}) => {
+  let payload;
+  try { payload = verifyToken(token); } catch { return { error: 'Session expired.' }; }
+  if (payload.role !== 'admin') return { error: 'Unauthorized.' };
+  reopenDay(dept, date, payload.displayName);
+  return { success: true };
+});
+
+// ── Month closures: list (admin) ──────────────────────────────────
+ipcMain.handle('closure:list', (_e, { token, dept } = {}) => {
+  let payload;
+  try { payload = verifyToken(token); } catch { return { error: 'Session expired.' }; }
+  if (payload.role !== 'admin') return { error: 'Unauthorized.' };
+  return { closures: listClosures(dept) };
+});
+
+// ── Month closures: close (admin) ─────────────────────────────────
+ipcMain.handle('closure:close', (_e, { token, dept, month } = {}) => {
+  let payload;
+  try { payload = verifyToken(token); } catch { return { error: 'Session expired.' }; }
+  if (payload.role !== 'admin') return { error: 'Unauthorized.' };
+  if (!dept || !month) return { error: 'Department and month required.' };
+  closeMonth(dept, month, payload.sub, payload.displayName);
+  return { success: true };
+});
+
+// ── Month closures: reopen (admin) ────────────────────────────────
+ipcMain.handle('closure:reopen', (_e, { token, dept, month } = {}) => {
+  let payload;
+  try { payload = verifyToken(token); } catch { return { error: 'Session expired.' }; }
+  if (payload.role !== 'admin') return { error: 'Unauthorized.' };
+  reopenMonth(dept, month);
+  return { success: true };
+});
+
+// ── Export: styled .xlsx compliance report (admin) ────────────────
+ipcMain.handle('export:xlsx', async (e, { token, payload } = {}) => {
+  let auth;
+  try { auth = verifyToken(token); } catch { return { error: 'Session expired.' }; }
+  if (auth.role !== 'admin') return { error: 'Unauthorized.' };
+  if (!payload?.rows) return { error: 'Nothing to export.' };
+
+  const win = BrowserWindow.fromWebContents(e.sender);
+  const dateTag = new Date().toISOString().slice(0, 10);
+  const result = await dialog.showSaveDialog(win, {
+    title: 'Export Compliance Report',
+    defaultPath: `CQPM_Compliance_${dateTag}.xlsx`,
+    filters: [{ name: 'Excel Workbook', extensions: ['xlsx'] }],
+  });
+  if (result.canceled || !result.filePath) return { success: false, canceled: true };
+
+  try {
+    const wb = buildComplianceWorkbook(ExcelJS, payload);
+    await wb.xlsx.writeFile(result.filePath);
+    return { success: true, path: result.filePath };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
 });

@@ -4,11 +4,14 @@ import { RemoteConfigProvider } from './contexts/RemoteConfigContext';
 import { useAuth } from './hooks/useAuth';
 import { useRemoteConfigContext } from './hooks/useRemoteConfigContext';
 import Login from './components/Login';
+import ChangePasswordModal from './components/ChangePasswordModal';
 import SessionWarning from './components/SessionWarning';
 import Sidebar from './components/Sidebar';
 import TitleBar from './components/TitleBar';
+import TodayPage from './pages/TodayPage';
 import MatrixPage from './pages/MatrixPage';
 import ParametersPage from './pages/ParametersPage';
+import ApprovalsPage from './pages/ApprovalsPage';
 import LockScreen from './components/LockScreen';
 import AnnouncementBanner from './components/AnnouncementBanner';
 import UpdateBanner from './components/UpdateBanner';
@@ -16,9 +19,9 @@ import UpdateBanner from './components/UpdateBanner';
 const ALL_DEPTS = ['serology', 'molecularBio', 'microbiology'];
 
 function AppShell() {
-  const { isAuthenticated, user, isAdmin } = useAuth();
+  const { isAuthenticated, user, isAdmin, mustChangePassword } = useAuth();
   const { isLocked, lockMessage, announcement, updateInfo, departments, features } = useRemoteConfigContext();
-  const [page, setPage] = useState('matrix');
+  const [page, setPage] = useState('today');
 
   // Departments hidden remotely drop out of the switcher and routing.
   const visibleDepts = useMemo(
@@ -39,11 +42,21 @@ function AppShell() {
   if (!isAuthenticated) return <Login />;
 
   // The in-app admin surface can be switched off remotely, even for admins.
-  const adminEnabled = isAdmin && features.adminPanel !== false;
-  const showBanners  = announcement.active || updateInfo.needed;
+  const adminEnabled  = isAdmin && features.adminPanel !== false;
+  const matrixEnabled = features.matrix !== false;
+  const showBanners   = announcement.active || updateInfo.needed;
 
-  // Parameters is an admin-only page; fall back to matrix if it becomes unavailable.
-  const activePage = page === 'parameters' && !adminEnabled ? 'matrix' : page;
+  // Pages can be switched off remotely; fall back to Today if the current one is unavailable.
+  const adminPages = ['parameters', 'approvals'];
+  let activePage = page;
+  if (adminPages.includes(activePage) && !adminEnabled) activePage = 'today';
+  if (activePage === 'matrix' && !matrixEnabled)        activePage = 'today';
+
+  const noDept = (
+    <div className="flex h-full items-center justify-center px-6 text-center text-sm text-muted-foreground">
+      No departments are currently available. Please contact your administrator.
+    </div>
+  );
 
   return (
     <div className="flex h-full bg-background text-foreground overflow-hidden">
@@ -53,6 +66,7 @@ function AppShell() {
         activeDept={activeDept}
         onDept={isAdmin ? setActiveDept : undefined}
         isAdmin={adminEnabled}
+        matrixEnabled={matrixEnabled}
         user={user}
         visibleDepts={visibleDepts}
       />
@@ -68,17 +82,15 @@ function AppShell() {
           </div>
         )}
 
-        {activePage === 'parameters'
-          ? <ParametersPage dept={activeDept} />
-          : activeDept
-            ? <MatrixPage dept={activeDept} />
-            : (
-              <div className="flex h-full items-center justify-center px-6 text-center text-sm text-muted-foreground">
-                No departments are currently available. Please contact your administrator.
-              </div>
-            )}
+        {activePage === 'parameters' && <ParametersPage dept={activeDept} />}
+        {activePage === 'approvals'  && <ApprovalsPage />}
+        {activePage === 'today'      && (activeDept ? <TodayPage  dept={activeDept} /> : noDept)}
+        {activePage === 'matrix'     && (activeDept ? <MatrixPage dept={activeDept} /> : noDept)}
       </main>
       <SessionWarning />
+
+      {/* Forced password change on first login — blocks the app until resolved. */}
+      {mustChangePassword && <ChangePasswordModal />}
     </div>
   );
 }

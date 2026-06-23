@@ -20,6 +20,22 @@ contextBridge.exposeInMainWorld('cqpm', {
     getRange: (token, dept, from, to) => ipcRenderer.invoke('entries:get-range', { token, dept, from, to }),
     save:     (token, entry)          => ipcRenderer.invoke('entries:save',      { token, entry }),
   },
+  signoff: {
+    range:   (token, dept, from, to) => ipcRenderer.invoke('signoff:range',   { token, dept, from, to }),
+    get:     (token, dept, date)     => ipcRenderer.invoke('signoff:get',     { token, dept, date }),
+    submit:  (token, dept, date)     => ipcRenderer.invoke('signoff:submit',  { token, dept, date }),
+    pending: (token)                 => ipcRenderer.invoke('signoff:pending', { token }),
+    approve: (token, dept, date)     => ipcRenderer.invoke('signoff:approve', { token, dept, date }),
+    reopen:  (token, dept, date)     => ipcRenderer.invoke('signoff:reopen',  { token, dept, date }),
+  },
+  closure: {
+    list:   (token, dept)        => ipcRenderer.invoke('closure:list',   { token, dept }),
+    close:  (token, dept, month) => ipcRenderer.invoke('closure:close',  { token, dept, month }),
+    reopen: (token, dept, month) => ipcRenderer.invoke('closure:reopen', { token, dept, month }),
+  },
+  report: {
+    xlsx: (token, payload) => ipcRenderer.invoke('export:xlsx', { token, payload }),
+  },
   win: {
     minimize:       () => ipcRenderer.invoke('window:minimize'),
     toggleMaximize: () => ipcRenderer.invoke('window:toggle-maximize'),

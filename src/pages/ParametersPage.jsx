@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
-  Plus, Pencil, Trash2, FlaskConical, ChevronDown, ChevronRight,
+  Plus, Pencil, Trash2, FlaskConical,
   RefreshCw, CalendarDays, AlertTriangle, Hash, Type, CheckSquare,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -137,138 +137,76 @@ function TypeBadge({ param }) {
   );
 }
 
-// ── Single parameter card ─────────────────────────────────────────────────────
-function ParamCard({ param, isAdmin, onEdit, onDelete }) {
+// ── Numeric range badge ───────────────────────────────────────────────────────
+function RangeBadge({ param }) {
+  if (param.entry_type !== 'numeric') return null;
+  if (param.min_value == null && param.max_value == null) return null;
+  const label =
+    param.min_value != null && param.max_value != null ? `${param.min_value}–${param.max_value}`
+    : param.min_value != null ? `≥ ${param.min_value}`
+    : `≤ ${param.max_value}`;
+  return (
+    <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border bg-muted/50 text-muted-foreground"
+      title="Acceptable range — readings outside are flagged">
+      <Hash className="w-2.5 h-2.5" />
+      {label}{param.unit ? ` ${param.unit}` : ''}
+    </span>
+  );
+}
+
+// ── Single parameter row (stacked vertically) ─────────────────────────────────
+function ParamRow({ param, isAdmin, onEdit, onDelete }) {
   return (
     <div className={cn(
-      'relative rounded-xl border bg-card flex flex-col gap-3 p-4 group',
-      'hover:border-border/80 hover:shadow-sm transition-all',
-      param.critical ? 'border-l-2 border-l-red-400' : ''
+      'group flex items-center gap-4 rounded-lg border bg-card px-4 py-3',
+      'hover:border-border/80 hover:bg-muted/20 transition-colors',
+      param.critical ? 'border-l-2 border-l-red-400' : 'border-l-2 border-l-transparent'
     )}>
-      {/* Admin actions */}
-      {isAdmin && (
-        <div className="absolute top-3 right-3 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-          <button onClick={() => onEdit(param)}
-            className="p-1.5 rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
-            title="Edit">
-            <Pencil className="w-3 h-3" />
-          </button>
-          <button onClick={() => onDelete(param)}
-            className="p-1.5 rounded-md hover:bg-destructive/10 transition-colors text-muted-foreground hover:text-destructive"
-            title="Remove">
-            <Trash2 className="w-3 h-3" />
-          </button>
-        </div>
-      )}
-
-      {/* Header */}
-      <div>
-        <div className="flex items-start gap-1.5 pr-12">
+      {/* Name + description */}
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-1.5 flex-wrap">
           {param.critical === 1 && (
-            <AlertTriangle className="w-3 h-3 text-red-400 flex-shrink-0 mt-0.5" />
+            <AlertTriangle className="w-3 h-3 text-red-400 flex-shrink-0" />
           )}
-          <p className="text-sm font-semibold leading-snug">{param.name}</p>
+          <p className="text-sm font-semibold leading-tight truncate">{param.name}</p>
+          {param.critical === 1 && (
+            <span className="text-[9px] px-1.5 py-0.5 rounded border bg-red-500/10 text-red-400 border-red-500/20 font-semibold tracking-wide">
+              CRITICAL
+            </span>
+          )}
         </div>
         {param.description && (
-          <p className="text-[11px] text-muted-foreground mt-1 line-clamp-2">{param.description}</p>
+          <p className="text-[11px] text-muted-foreground mt-0.5 truncate">{param.description}</p>
         )}
       </div>
 
-      {/* Schedule viz */}
-      <div className="flex-1">
-        <p className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground mb-1.5">
+      {/* Schedule */}
+      <div className="hidden lg:flex flex-col gap-1 w-52 flex-shrink-0">
+        <p className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">
           {param.schedule_type === 'specific' ? 'Scheduled On' : 'Repeats'}
         </p>
         <ScheduleViz param={param} />
       </div>
 
-      {/* Footer */}
-      <div className="flex items-center justify-between pt-2 border-t border-border/50">
+      {/* Type + range */}
+      <div className="hidden sm:flex flex-col items-start gap-1 w-40 flex-shrink-0">
         <TypeBadge param={param} />
-        {param.critical === 1 && (
-          <span className="text-[9px] px-1.5 py-0.5 rounded border bg-red-500/10 text-red-400 border-red-500/20 font-semibold tracking-wide">
-            CRITICAL
-          </span>
-        )}
+        <RangeBadge param={param} />
       </div>
-    </div>
-  );
-}
 
-// ── Department section ────────────────────────────────────────────────────────
-function DeptSection({ dept, params, isAdmin, onAdd, onEdit, onDelete }) {
-  const [open, setOpen] = useState(true);
-  const critCount = params.filter(p => p.critical).length;
-
-  return (
-    <div className={cn('rounded-xl border overflow-hidden', dept.border)}>
-      {/* Section header */}
-      <button
-        onClick={() => setOpen(v => !v)}
-        className={cn(
-          'w-full flex items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/20',
-          dept.headerBg
-        )}>
-        <span className={cn('w-2.5 h-2.5 rounded-full flex-shrink-0', dept.color)} />
-        <span className={cn('text-xs font-bold uppercase tracking-wider', dept.accent)}>
-          {dept.label}
-        </span>
-        <span className="text-[10px] text-muted-foreground ml-1">
-          {params.length} param{params.length !== 1 ? 's' : ''}
-          {critCount > 0 && ` · ${critCount} critical`}
-        </span>
-        <div className="ml-auto flex items-center gap-2">
-          {isAdmin && (
-            <span
-              onClick={e => { e.stopPropagation(); onAdd(dept.id); }}
-              className={cn(
-                'text-[10px] px-2 py-0.5 rounded-md border font-medium transition-colors cursor-pointer',
-                'hover:bg-primary/10 hover:text-primary hover:border-primary/30',
-                'text-muted-foreground border-border/60'
-              )}>
-              + Add
-            </span>
-          )}
-          {open
-            ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
-            : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
-        </div>
-      </button>
-
-      {/* Cards grid */}
-      {open && (
-        <div className="p-4">
-          {params.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-8 gap-2 text-muted-foreground border border-dashed rounded-lg">
-              <FlaskConical className="w-6 h-6 opacity-25" />
-              <p className="text-xs">No parameters yet for {dept.label}.</p>
-              {isAdmin && (
-                <button onClick={() => onAdd(dept.id)}
-                  className="text-xs flex items-center gap-1 px-2.5 py-1 rounded-md border hover:bg-muted transition-colors mt-1">
-                  <Plus className="w-3 h-3" /> Add first
-                </button>
-              )}
-            </div>
-          ) : (
-            <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))' }}>
-              {params.map(p => (
-                <ParamCard key={p.id} param={p} isAdmin={isAdmin}
-                  onEdit={onEdit} onDelete={onDelete} />
-              ))}
-              {/* Add card (admin only) */}
-              {isAdmin && (
-                <button onClick={() => onAdd(dept.id)}
-                  className={cn(
-                    'rounded-xl border-2 border-dashed border-border/40 min-h-[120px]',
-                    'flex flex-col items-center justify-center gap-2 text-muted-foreground',
-                    'hover:border-primary/40 hover:bg-primary/5 hover:text-primary transition-all group'
-                  )}>
-                  <Plus className="w-5 h-5 transition-transform group-hover:scale-110" />
-                  <span className="text-xs font-medium">New Parameter</span>
-                </button>
-              )}
-            </div>
-          )}
+      {/* Admin actions — always visible, brighten on hover */}
+      {isAdmin && (
+        <div className="flex items-center gap-0.5 flex-shrink-0">
+          <button onClick={() => onEdit(param)}
+            className="p-1.5 rounded-md hover:bg-muted transition-colors text-muted-foreground/60 hover:text-foreground"
+            title="Edit">
+            <Pencil className="w-3.5 h-3.5" />
+          </button>
+          <button onClick={() => onDelete(param)}
+            className="p-1.5 rounded-md hover:bg-destructive/10 transition-colors text-muted-foreground/60 hover:text-destructive"
+            title="Remove">
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
         </div>
       )}
     </div>
@@ -302,13 +240,14 @@ export default function ParametersPage({ dept }) {
     load();
   }
 
-  // Visible depts: admin sees all, staff sees only theirs
-  const visibleDepts = isAdmin ? DEPTS : DEPTS.filter(d => d.id === dept);
+  // Only the department selected in the sidebar is shown.
+  const deptMeta   = DEPTS.find(d => d.id === dept) ?? DEPTS[0];
+  const deptParams = params.filter(p => p.department === dept);
 
-  const totalParams   = params.length;
-  const critCount     = params.filter(p => p.critical).length;
-  const freqCount     = params.filter(p => p.schedule_type !== 'specific').length;
-  const specificCount = params.filter(p => p.schedule_type === 'specific').length;
+  const totalParams   = deptParams.length;
+  const critCount     = deptParams.filter(p => p.critical).length;
+  const freqCount     = deptParams.filter(p => p.schedule_type !== 'specific').length;
+  const specificCount = deptParams.filter(p => p.schedule_type === 'specific').length;
 
   return (
     <div className="flex flex-col h-full">
@@ -316,7 +255,11 @@ export default function ParametersPage({ dept }) {
       {/* Top bar */}
       <div className="flex items-center justify-between px-6 py-4 border-b bg-card/50 backdrop-blur flex-shrink-0 gap-4">
         <div>
-          <h1 className="text-base font-semibold">Parameter Configuration</h1>
+          <h1 className="text-base font-semibold flex items-center gap-2">
+            <span className={cn('w-2.5 h-2.5 rounded-full', deptMeta.color)} />
+            <span className={deptMeta.accent}>{deptMeta.label}</span>
+            <span className="text-muted-foreground font-normal">· Parameters</span>
+          </h1>
           {!loading && (
             <div className="flex items-center gap-3 mt-0.5">
               <span className="text-[11px] text-muted-foreground">{totalParams} total</span>
@@ -339,7 +282,7 @@ export default function ParametersPage({ dept }) {
           )}
         </div>
         {isAdmin && (
-          <button onClick={() => setModal({ dept: 'serology' })}
+          <button onClick={() => setModal({ dept })}
             className="flex items-center gap-1.5 h-8 px-3 text-xs rounded-md bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors flex-shrink-0">
             <Plus className="w-3.5 h-3.5" />
             Add Parameter
@@ -347,22 +290,43 @@ export default function ParametersPage({ dept }) {
         )}
       </div>
 
-      {/* Body */}
-      <div className="flex-1 overflow-auto p-5 flex flex-col gap-4">
+      {/* Body — clean stacked list for the selected department only */}
+      <div className="flex-1 overflow-auto p-5">
         {loading ? (
           <div className="flex items-center justify-center h-40 text-muted-foreground text-sm">Loading…</div>
         ) : (
-          visibleDepts.map(d => (
-            <DeptSection
-              key={d.id}
-              dept={d}
-              params={params.filter(p => p.department === d.id)}
-              isAdmin={isAdmin}
-              onAdd={deptId => setModal({ dept: deptId })}
-              onEdit={p => setModal(p)}
-              onDelete={handleDelete}
-            />
-          ))
+          <div className="max-w-4xl mx-auto flex flex-col gap-2">
+            {deptParams.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 gap-2 text-muted-foreground border border-dashed rounded-xl">
+                <FlaskConical className="w-7 h-7 opacity-25" />
+                <p className="text-sm">No parameters yet for {deptMeta.label}.</p>
+                {isAdmin && (
+                  <button onClick={() => setModal({ dept })}
+                    className="text-xs flex items-center gap-1 px-2.5 py-1 rounded-md border hover:bg-muted transition-colors mt-1">
+                    <Plus className="w-3 h-3" /> Add first parameter
+                  </button>
+                )}
+              </div>
+            ) : (
+              <>
+                {deptParams.map(p => (
+                  <ParamRow key={p.id} param={p} isAdmin={isAdmin}
+                    onEdit={() => setModal(p)} onDelete={handleDelete} />
+                ))}
+                {isAdmin && (
+                  <button onClick={() => setModal({ dept })}
+                    className={cn(
+                      'rounded-lg border-2 border-dashed border-border/40 py-2.5 mt-1',
+                      'flex items-center justify-center gap-2 text-muted-foreground',
+                      'hover:border-primary/40 hover:bg-primary/5 hover:text-primary transition-all group'
+                    )}>
+                    <Plus className="w-4 h-4 transition-transform group-hover:scale-110" />
+                    <span className="text-xs font-medium">New Parameter</span>
+                  </button>
+                )}
+              </>
+            )}
+          </div>
         )}
       </div>
 

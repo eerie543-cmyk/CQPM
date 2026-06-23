@@ -1,10 +1,13 @@
 import { useState, useMemo, useCallback } from 'react';
-import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut, CheckCircle2, Circle, AlertCircle, Minus, Plus } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut, CheckCircle2, Circle, AlertCircle, AlertTriangle, Minus, Plus, Lock, RotateCcw, FileSpreadsheet } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useMatrix } from '@/hooks/useMatrix';
 import { useAuth } from '@/hooks/useAuth';
+import { useRemoteConfigContext } from '@/hooks/useRemoteConfigContext';
+import { isDue, isOutOfRange, todayStr, addDays } from '@/lib/schedule';
 import EntryModal from '@/components/EntryModal';
 import ParamBuilderModal from '@/components/ParamBuilderModal';
+import ExportModal from '@/components/ExportModal';
 
 const SCALES = ['day', 'week', 'month', 'quarter', 'year'];
 const SCALE_LABELS = { day: 'Daily', week: 'Weekly', month: 'Monthly', quarter: 'Quarterly', year: 'Yearly' };
@@ -23,14 +26,6 @@ const GRADE = score =>
   : score >= 80 ? { label: 'Good',     cls: 'bg-blue-500/10 text-blue-400 border-blue-500/20' }
   : score >= 65 ? { label: 'Fair',     cls: 'bg-amber-500/10 text-amber-400 border-amber-500/20' }
   :               { label: 'At Risk',  cls: 'bg-red-500/10 text-red-400 border-red-500/20' };
-
-function getToday() { return new Date().toISOString().slice(0, 10); }
-
-function addDays(dateStr, n) {
-  const d = new Date(dateStr);
-  d.setDate(d.getDate() + n);
-  return d.toISOString().slice(0, 10);
-}
 
 function formatDate(dateStr, scale) {
   const d = new Date(dateStr + 'T00:00:00');
@@ -69,48 +64,16 @@ function getColumnDates(anchorDate, scale, count) {
   return dates;
 }
 
-function isDue(param, dateStr, scale = 'day') {
-  if (param.schedule_type === 'specific') {
-    const dates = (param.specific_dates || '').split(',').filter(Boolean);
-    if (scale === 'day') return dates.includes(dateStr);
-
-    // For coarser scales, check if any specific date falls within the column period
-    const start = new Date(dateStr + 'T00:00:00');
-    const end   = new Date(start);
-    if      (scale === 'week')    end.setDate(end.getDate() + 6);
-    else if (scale === 'month')   { end.setMonth(end.getMonth() + 1);   end.setDate(0); }
-    else if (scale === 'quarter') { end.setMonth(end.getMonth() + 3);   end.setDate(0); }
-    else if (scale === 'year')    { end.setFullYear(end.getFullYear()+1); end.setDate(0); }
-    return dates.some(d => {
-      const dt = new Date(d + 'T00:00:00');
-      return dt >= start && dt <= end;
-    });
-  }
-
-  // Frequency-based
-  const d = new Date(dateStr + 'T00:00:00');
-  const dow = d.getDay();
-  switch (param.frequency) {
-    case 'daily':    return true;
-    case 'weekly': {
-      const days = (param.days_of_week || '1').split(',').map(Number);
-      return days.includes(dow);
-    }
-    case 'biweekly': return dow === 1;
-    case 'monthly':  return d.getDate() === (param.day_of_month || 1);
-    case 'quarterly': {
-      const m = d.getMonth();
-      return d.getDate() === 1 && m % 3 === 0;
-    }
-    case 'yearly': return d.getDate() === 1 && d.getMonth() === 0;
-    default: return false;
-  }
-}
-
-function CellStatus({ status, isDueFlag, isToday, critical }) {
+function CellStatus({ status, isDueFlag, isToday, critical, outOfRange }) {
   if (!isDueFlag) return (
     <div className="w-full h-full flex items-center justify-center">
       <Minus className="w-3 h-3 text-muted-foreground/20" />
+    </div>
+  );
+  // Done/late but value out of allowed range → flag instead of a clean tick
+  if ((status === 'done' || status === 'late') && outOfRange) return (
+    <div className="w-full h-full flex items-center justify-center" title="Recorded value is out of range">
+      <AlertTriangle className="w-4 h-4 text-orange-400" />
     </div>
   );
   if (status === 'done') return (
@@ -136,19 +99,47 @@ function CellStatus({ status, isDueFlag, isToday, critical }) {
 }
 
 export default function MatrixPage({ dept }) {
-  const today = getToday();
+  const today = todayStr();
   const COL_COUNT = 14;
   const { isAdmin } = useAuth();
+  const { features } = useRemoteConfigContext();
+  const exportEnabled = isAdmin && features.export !== false;
 
   const [scale,      setScale]    = useState('day');
   const [anchorDate, setAnchor]   = useState(() => addDays(today, -7));
-  const [entry,      setEntry]    = useState(null);   // {param, date}
+  const [entry,      setEntry]    = useState(null);   // {param, date, locked}
   const [addParam,   setAddParam] = useState(false);  // open param builder
+  const [exporting,  setExporting]= useState(false);  // open export modal
 
   const cols = useMemo(() => getColumnDates(anchorDate, scale, COL_COUNT), [anchorDate, scale]);
-  const { params, entries, loading, reload } = useMatrix(dept, cols[0], cols[cols.length - 1]);
+  const { params, entries, signoffs, closures, loading, reload } = useMatrix(dept, cols[0], cols[cols.length - 1]);
   const colors = DEPT_COLORS[dept] ?? DEPT_COLORS.serology;
   const scaleIdx = SCALES.indexOf(scale);
+
+  // Per-day lock state (only meaningful at day scale)
+  const signoffMap = useMemo(() => {
+    const m = {};
+    for (const s of signoffs) m[s.slot_date] = s;
+    return m;
+  }, [signoffs]);
+  const closedMonths = useMemo(() => new Set(closures.map(c => c.month)), [closures]);
+
+  const dayLock = useCallback((date) => {
+    if (closedMonths.has(date.slice(0, 7))) return 'closed';
+    const s = signoffMap[date];
+    if (s?.status === 'approved')  return 'approved';
+    if (s?.status === 'submitted') return 'submitted';
+    if (s?.status === 'reopened')  return 'reopened';
+    return null;
+  }, [signoffMap, closedMonths]);
+
+  // Is the day read-only for the current user?
+  const isLockedForUser = useCallback((date) => {
+    const lock = dayLock(date);
+    if (lock === 'closed' || lock === 'approved') return true;
+    if (lock === 'submitted' && !isAdmin) return true;
+    return false;
+  }, [dayLock, isAdmin]);
 
   function navigate(dir) {
     const step = { day: 7, week: 4, month: 3, quarter: 2, year: 1 }[scale] ?? 7;
@@ -181,19 +172,21 @@ export default function MatrixPage({ dept }) {
         if (!isDue(p, col, scale)) continue;
         totalW += w;
         if (p.critical) critDue++;
-        const e = entryMap[`${p.id}__${col}`];
-        if (e?.status === 'done') { earnedW += w; if (p.critical) critDone++; }
-        else if (e?.status === 'late') { earnedW += w * 0.7; if (p.critical) critDone++; }
+        const e   = entryMap[`${p.id}__${col}`];
+        const oor = isOutOfRange(p, e);
+        // Out-of-range readings earn nothing even if marked done
+        if (e?.status === 'done' && !oor) { earnedW += w;       if (p.critical) critDone++; }
+        else if (e?.status === 'late' && !oor) { earnedW += w * 0.7; if (p.critical) critDone++; }
       }
     }
     const pct = totalW === 0 ? null : Math.round((earnedW / totalW) * 100);
     return { pct, critDue, critDone };
-  }, [params, cols, entryMap]);
+  }, [params, cols, entryMap, scale]);
 
   const handleCellClick = useCallback((param, dateStr) => {
     if (dateStr > today) return;
-    setEntry({ param, date: dateStr });
-  }, [today]);
+    setEntry({ param, date: dateStr, locked: isLockedForUser(dateStr) });
+  }, [today, isLockedForUser]);
 
   const { pct: score, critDue, critDone } = scoreData;
   const grade = score !== null ? GRADE(score) : null;
@@ -225,6 +218,16 @@ export default function MatrixPage({ dept }) {
                 </span>
               )}
             </div>
+          )}
+
+          {/* Export — admin only, remotely gateable */}
+          {exportEnabled && (
+            <button onClick={() => setExporting(true)}
+              className="flex items-center gap-1 h-7 px-2.5 text-xs rounded-md border hover:border-primary/60 hover:bg-primary/5 text-muted-foreground hover:text-primary transition-colors"
+              title="Export compliance report (.xlsx)">
+              <FileSpreadsheet className="w-3 h-3" />
+              Export
+            </button>
           )}
 
           {/* Add parameter — admin only */}
@@ -331,6 +334,36 @@ export default function MatrixPage({ dept }) {
                   );
                 })}
               </tr>
+
+              {/* Per-day lock / approval status (day scale only) */}
+              {scale === 'day' && (
+                <tr>
+                  <th className="sticky left-0 z-10 bg-card border-r border-b px-3 py-1 text-left text-[9px] font-medium uppercase tracking-widest text-muted-foreground/70 w-56">
+                    Day status
+                  </th>
+                  {cols.map(col => {
+                    const lock = dayLock(col);
+                    const icon =
+                      lock === 'closed'    ? <Lock className="w-3 h-3 text-red-400 mx-auto" />
+                    : lock === 'approved'  ? <CheckCircle2 className="w-3 h-3 text-emerald-400 mx-auto" />
+                    : lock === 'submitted' ? <Lock className="w-3 h-3 text-amber-400 mx-auto" />
+                    : lock === 'reopened'  ? <RotateCcw className="w-3 h-3 text-muted-foreground/50 mx-auto" />
+                    : null;
+                    const title =
+                      lock === 'closed'    ? 'Month closed — locked'
+                    : lock === 'approved'  ? 'Approved & locked'
+                    : lock === 'submitted' ? 'Submitted, awaiting approval'
+                    : lock === 'reopened'  ? 'Reopened for edits'
+                    : '';
+                    return (
+                      <th key={col} title={title}
+                        className={cn('border-b border-r py-1 text-center', col === today && 'bg-primary/5')}>
+                        {icon}
+                      </th>
+                    );
+                  })}
+                </tr>
+              )}
             </thead>
             <tbody>
               {params.map((param, pi) => (
@@ -358,12 +391,15 @@ export default function MatrixPage({ dept }) {
                     const isFuture = col > today;
                     const isToday  = col === today;
                     const e        = entryMap[`${param.id}__${col}`];
+                    const oor      = isOutOfRange(param, e);
+                    const locked   = scale === 'day' && isLockedForUser(col);
                     return (
                       <td key={col}
                         onClick={() => due && !isFuture && handleCellClick(param, col)}
                         className={cn(
                           'border-b border-r p-0.5 h-9 w-12 text-center',
                           isToday && 'bg-primary/5',
+                          locked && 'bg-muted/30',
                           due && !isFuture && 'cursor-pointer hover:bg-muted/50',
                           !due && 'opacity-40'
                         )}
@@ -373,6 +409,7 @@ export default function MatrixPage({ dept }) {
                           isDueFlag={due}
                           isToday={isToday}
                           critical={param.critical === 1}
+                          outOfRange={oor}
                         />
                       </td>
                     );
@@ -391,6 +428,7 @@ export default function MatrixPage({ dept }) {
           date={entry.date}
           existing={entryMap[`${entry.param.id}__${entry.date}`]}
           dept={dept}
+          locked={entry.locked}
           onSave={() => { setEntry(null); reload(); }}
           onClose={() => setEntry(null)}
         />
@@ -403,6 +441,11 @@ export default function MatrixPage({ dept }) {
           onSave={() => { setAddParam(false); reload(); }}
           onClose={() => setAddParam(false)}
         />
+      )}
+
+      {/* Export report (admin) */}
+      {exporting && (
+        <ExportModal dept={dept} onClose={() => setExporting(false)} />
       )}
     </div>
   );

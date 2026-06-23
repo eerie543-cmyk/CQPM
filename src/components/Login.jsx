@@ -3,7 +3,7 @@ import { Eye, EyeOff, FlaskConical, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 
-export default function Login({ onMustChangePassword }) {
+export default function Login() {
   const { login } = useAuth();
 
   const [username, setUsername] = useState('');
@@ -24,9 +24,8 @@ export default function Login({ onMustChangePassword }) {
       setError(result.error);
       return;
     }
-    if (result.mustChangePassword) {
-      onMustChangePassword?.();
-    }
+    // On success AuthContext flips isAuthenticated; if the account still needs a
+    // password change, App shows the forced ChangePasswordModal over the app.
   }
 
   return (

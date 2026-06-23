@@ -15,6 +15,13 @@ function getDb() {
   return _db;
 }
 
+function ensureColumn(db, table, col, ddl) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (!cols.some(c => c.name === col)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+  }
+}
+
 function initSchema(db) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
@@ -59,7 +66,39 @@ function initSchema(db) {
       created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
       UNIQUE(parameter_id, slot_date)
     );
+
+    -- End-of-shift sign-off / approval lifecycle (one row per department per day)
+    CREATE TABLE IF NOT EXISTS day_signoffs (
+      id                INTEGER PRIMARY KEY AUTOINCREMENT,
+      department        TEXT    NOT NULL,
+      slot_date         TEXT    NOT NULL,
+      status            TEXT    NOT NULL CHECK(status IN ('submitted','approved','reopened')) DEFAULT 'submitted',
+      submitted_by_id   INTEGER,
+      submitted_by_name TEXT,
+      submitted_at      TEXT,
+      approved_by_id    INTEGER,
+      approved_by_name  TEXT,
+      approved_at       TEXT,
+      reopened_by_name  TEXT,
+      reopened_at       TEXT,
+      UNIQUE(department, slot_date)
+    );
+
+    -- Permanent month-end closure (one row per department per month)
+    CREATE TABLE IF NOT EXISTS month_closures (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      department     TEXT    NOT NULL,
+      month          TEXT    NOT NULL,                -- YYYY-MM
+      closed_by_id   INTEGER,
+      closed_by_name TEXT,
+      closed_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(department, month)
+    );
   `);
+
+  // ── Lightweight migrations (add columns without dropping the DB) ──
+  ensureColumn(db, 'parameters', 'min_value', 'min_value REAL');
+  ensureColumn(db, 'parameters', 'max_value', 'max_value REAL');
 
   // Seed default admin
   const count = db.prepare('SELECT COUNT(*) AS c FROM users').get();
@@ -102,12 +141,12 @@ function listParameters(department) {
   ).all(department);
 }
 function allParameters() {
-  return getDb().prepare('SELECT * FROM parameters ORDER BY department, sort_order, id').all();
+  return getDb().prepare('SELECT * FROM parameters WHERE active = 1 ORDER BY department, sort_order, id').all();
 }
-function insertParameter({ department, name, description, scheduleType, frequency, daysOfWeek, dayOfMonth, specificDates, entryType, unit, critical, sortOrder }) {
+function insertParameter({ department, name, description, scheduleType, frequency, daysOfWeek, dayOfMonth, specificDates, entryType, unit, minValue, maxValue, critical, sortOrder }) {
   return getDb().prepare(`
-    INSERT INTO parameters (department, name, description, schedule_type, frequency, days_of_week, day_of_month, specific_dates, entry_type, unit, critical, sort_order)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO parameters (department, name, description, schedule_type, frequency, days_of_week, day_of_month, specific_dates, entry_type, unit, min_value, max_value, critical, sort_order)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     department, name, description || null,
     scheduleType || 'frequency',
@@ -115,6 +154,7 @@ function insertParameter({ department, name, description, scheduleType, frequenc
     daysOfWeek || null, dayOfMonth || null,
     specificDates || null,
     entryType || 'checkbox', unit || null,
+    minValue ?? null, maxValue ?? null,
     critical ? 1 : 0, sortOrder || 0
   );
 }
@@ -146,8 +186,90 @@ function upsertEntry({ parameterId, slotDate, status, value, notes, doneById, do
   `).run(parameterId, slotDate, status || 'done', value || null, notes || null, doneById, doneByName, department);
 }
 
+// ── Day sign-offs (submit / approve / reopen) ─────────────────────
+function getSignoff(department, slotDate) {
+  return getDb().prepare(
+    'SELECT * FROM day_signoffs WHERE department = ? AND slot_date = ?'
+  ).get(department, slotDate);
+}
+function getSignoffsForRange(department, fromDate, toDate) {
+  return getDb().prepare(
+    'SELECT * FROM day_signoffs WHERE department = ? AND slot_date BETWEEN ? AND ?'
+  ).all(department, fromDate, toDate);
+}
+function submitDay(department, slotDate, userId, userName) {
+  return getDb().prepare(`
+    INSERT INTO day_signoffs (department, slot_date, status, submitted_by_id, submitted_by_name, submitted_at)
+    VALUES (?, ?, 'submitted', ?, ?, datetime('now'))
+    ON CONFLICT(department, slot_date) DO UPDATE SET
+      status = 'submitted', submitted_by_id = excluded.submitted_by_id,
+      submitted_by_name = excluded.submitted_by_name, submitted_at = datetime('now'),
+      approved_by_id = NULL, approved_by_name = NULL, approved_at = NULL
+  `).run(department, slotDate, userId, userName);
+}
+function approveDay(department, slotDate, userId, userName) {
+  return getDb().prepare(`
+    UPDATE day_signoffs SET status = 'approved',
+      approved_by_id = ?, approved_by_name = ?, approved_at = datetime('now')
+    WHERE department = ? AND slot_date = ?
+  `).run(userId, userName, department, slotDate);
+}
+function reopenDay(department, slotDate, userName) {
+  return getDb().prepare(`
+    UPDATE day_signoffs SET status = 'reopened',
+      reopened_by_name = ?, reopened_at = datetime('now'),
+      approved_by_id = NULL, approved_by_name = NULL, approved_at = NULL
+    WHERE department = ? AND slot_date = ?
+  `).run(userName, department, slotDate);
+}
+function listPendingSignoffs() {
+  return getDb().prepare(
+    "SELECT * FROM day_signoffs WHERE status = 'submitted' ORDER BY slot_date DESC, department"
+  ).all();
+}
+
+// ── Month closures ────────────────────────────────────────────────
+function getClosure(department, month) {
+  return getDb().prepare(
+    'SELECT * FROM month_closures WHERE department = ? AND month = ?'
+  ).get(department, month);
+}
+function listClosures(department) {
+  return getDb().prepare(
+    'SELECT * FROM month_closures WHERE department = ? ORDER BY month DESC'
+  ).all(department);
+}
+function closeMonth(department, month, userId, userName) {
+  return getDb().prepare(`
+    INSERT INTO month_closures (department, month, closed_by_id, closed_by_name)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(department, month) DO NOTHING
+  `).run(department, month, userId, userName);
+}
+function reopenMonth(department, month) {
+  return getDb().prepare(
+    'DELETE FROM month_closures WHERE department = ? AND month = ?'
+  ).run(department, month);
+}
+
+// ── Lock guard ────────────────────────────────────────────────────
+// Returns a reason string if the day cannot be edited by this role, else null.
+//   'month-closed' | 'approved' | 'submitted' | null
+function dayLockReason(department, slotDate, role) {
+  if (getClosure(department, slotDate.slice(0, 7))) return 'month-closed';
+  const s = getSignoff(department, slotDate);
+  if (s) {
+    if (s.status === 'approved')  return 'approved';
+    if (s.status === 'submitted') return role === 'admin' ? null : 'submitted';
+    // 'reopened' → unlocked
+  }
+  return null;
+}
+
 module.exports = {
   findByUsername, listUsers, insertUser, setPasswordHash, deleteUser,
   listParameters, allParameters, insertParameter, updateParameter, deleteParameter,
   getEntriesForRange, upsertEntry,
+  getSignoff, getSignoffsForRange, submitDay, approveDay, reopenDay, listPendingSignoffs,
+  getClosure, listClosures, closeMonth, reopenMonth, dayLockReason,
 };

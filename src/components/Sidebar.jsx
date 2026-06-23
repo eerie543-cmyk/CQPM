@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { FlaskConical, LayoutGrid, CalendarDays, Users, LogOut, ChevronRight } from 'lucide-react';
+import { FlaskConical, LayoutGrid, CalendarDays, Users, LogOut, ChevronRight, ClipboardCheck, Inbox } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { useRemoteConfigContext } from '@/hooks/useRemoteConfigContext';
@@ -12,8 +12,10 @@ const DEPTS = [
 ];
 
 const NAV = [
-  { id: 'matrix',     label: 'Matrix',     icon: LayoutGrid,   adminOnly: false },
-  { id: 'parameters', label: 'Parameters', icon: CalendarDays, adminOnly: true  },
+  { id: 'today',      label: 'Today',      icon: ClipboardCheck, adminOnly: false },
+  { id: 'matrix',     label: 'Matrix',     icon: LayoutGrid,     adminOnly: false },
+  { id: 'parameters', label: 'Parameters', icon: CalendarDays,   adminOnly: true  },
+  { id: 'approvals',  label: 'Approvals',  icon: Inbox,          adminOnly: true  },
 ];
 
 /** Short relative time for the sync tooltip, e.g. "just now", "4m ago". */
@@ -26,7 +28,7 @@ function relTime(ts) {
   return `${Math.round(m / 60)}h ago`;
 }
 
-export default function Sidebar({ page, onPage, activeDept, onDept, isAdmin, user, visibleDepts }) {
+export default function Sidebar({ page, onPage, activeDept, onDept, isAdmin, matrixEnabled = true, user, visibleDepts }) {
   const { logout } = useAuth();
   const { appVersion, status, lastSync, configured } = useRemoteConfigContext();
   const [usersOpen, setUsersOpen] = useState(false);
@@ -100,7 +102,10 @@ export default function Sidebar({ page, onPage, activeDept, onDept, isAdmin, use
           <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-2 px-1">
             Navigation
           </p>
-          {NAV.filter(n => !n.adminOnly || isAdmin).map(n => {
+          {NAV
+            .filter(n => !n.adminOnly || isAdmin)
+            .filter(n => n.id !== 'matrix' || matrixEnabled)
+            .map(n => {
             const Icon   = n.icon;
             const active = page === n.id;
             return (

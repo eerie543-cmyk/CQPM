@@ -170,6 +170,8 @@ export default function ParamBuilderModal({ dept, existing, onSave, onClose }) {
     // Common
     entryType:     existing?.entry_type    ?? 'checkbox',
     unit:          existing?.unit          ?? '',
+    minValue:      existing?.min_value     ?? '',
+    maxValue:      existing?.max_value     ?? '',
     critical:      existing?.critical      === 1,
   });
   const [loading, setLoading] = useState(false);
@@ -198,11 +200,19 @@ export default function ParamBuilderModal({ dept, existing, onSave, onClose }) {
         return setError('Select at least one specific date.');
     }
 
+    if (form.entryType === 'numeric' && form.minValue !== '' && form.maxValue !== ''
+        && Number(form.minValue) > Number(form.maxValue))
+      return setError('Minimum value cannot be greater than maximum.');
+
     setLoading(true);
     setError('');
     try {
       const isFreq  = form.scheduleType === 'frequency';
       const needsDays = isFreq && (form.frequency === 'weekly' || form.frequency === 'biweekly');
+
+      const isNumeric = form.entryType === 'numeric';
+      const minVal = isNumeric && form.minValue !== '' ? Number(form.minValue) : null;
+      const maxVal = isNumeric && form.maxValue !== '' ? Number(form.maxValue) : null;
 
       const commonFields = {
         name:          form.name.trim(),
@@ -213,7 +223,9 @@ export default function ParamBuilderModal({ dept, existing, onSave, onClose }) {
         day_of_month:  (isFreq && form.frequency === 'monthly') ? Number(form.dayOfMonth) : null,
         specific_dates: !isFreq ? form.specificDates.join(',') : null,
         entry_type:    form.entryType,
-        unit:          form.entryType === 'numeric' ? form.unit.trim() || null : null,
+        unit:          isNumeric ? form.unit.trim() || null : null,
+        min_value:     minVal,
+        max_value:     maxVal,
         critical:      form.critical ? 1 : 0,
       };
 
@@ -229,6 +241,8 @@ export default function ParamBuilderModal({ dept, existing, onSave, onClose }) {
           dayOfMonth:    (isFreq && form.frequency === 'monthly') ? Number(form.dayOfMonth) : null,
           specificDates: !isFreq ? form.specificDates.join(',') : null,
           entryType:     form.entryType,
+          minValue:      minVal,
+          maxValue:      maxVal,
           department:    form.department,
         });
       }
@@ -408,11 +422,29 @@ export default function ParamBuilderModal({ dept, existing, onSave, onClose }) {
           </Field>
 
           {form.entryType === 'numeric' && (
-            <Field label="Unit (optional)">
-              <input type="text" value={form.unit} onChange={e => set('unit', e.target.value)}
-                placeholder="e.g. °C, mg/dL, CFU/mL"
-                className="h-9 w-36 rounded-md border bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
-            </Field>
+            <>
+              <Field label="Unit (optional)">
+                <input type="text" value={form.unit} onChange={e => set('unit', e.target.value)}
+                  placeholder="e.g. °C, mg/dL, CFU/mL"
+                  className="h-9 w-36 rounded-md border bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+              </Field>
+
+              <Field label="Acceptable Range (optional)">
+                <div className="flex items-center gap-2">
+                  <input type="number" step="0.1" value={form.minValue}
+                    onChange={e => set('minValue', e.target.value)} placeholder="Min"
+                    className="h-9 w-24 rounded-md border bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+                  <span className="text-xs text-muted-foreground">to</span>
+                  <input type="number" step="0.1" value={form.maxValue}
+                    onChange={e => set('maxValue', e.target.value)} placeholder="Max"
+                    className="h-9 w-24 rounded-md border bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+                  {form.unit && <span className="text-xs text-muted-foreground">{form.unit}</span>}
+                </div>
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  Readings outside this range are flagged and require a reason. Leave blank for no limit.
+                </p>
+              </Field>
+            </>
           )}
 
           {/* Critical toggle */}
