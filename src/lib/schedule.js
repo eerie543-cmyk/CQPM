@@ -1,35 +1,51 @@
 // Shared scheduling helpers — used by the Matrix grid and the Today checklist
 // so "what is due" is computed in exactly one place.
 
+export function toLocalYMD(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const dateVal = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${dateVal}`;
+}
+
 export function todayStr() {
-  return new Date().toISOString().slice(0, 10);
+  return toLocalYMD(new Date());
 }
 
 export function addDays(dateStr, n) {
   const d = new Date(dateStr + 'T00:00:00');
   d.setDate(d.getDate() + n);
-  return d.toISOString().slice(0, 10);
+  return toLocalYMD(d);
 }
 
 // Is `param` due on `dateStr`?  `scale` widens the check for coarser grid views.
 export function isDue(param, dateStr, scale = 'day') {
-  if (param.schedule_type === 'specific') {
-    const dates = (param.specific_dates || '').split(',').filter(Boolean);
-    if (scale === 'day') return dates.includes(dateStr);
-
-    const start = new Date(dateStr + 'T00:00:00');
-    const end   = new Date(start);
-    if      (scale === 'week')    end.setDate(end.getDate() + 6);
-    else if (scale === 'month')   { end.setMonth(end.getMonth() + 1);     end.setDate(0); }
-    else if (scale === 'quarter') { end.setMonth(end.getMonth() + 3);     end.setDate(0); }
-    else if (scale === 'year')    { end.setFullYear(end.getFullYear()+1); end.setDate(0); }
-    return dates.some(d => {
-      const dt = new Date(d + 'T00:00:00');
-      return dt >= start && dt <= end;
-    });
+  if (scale === 'day') {
+    return isDueDay(param, dateStr);
   }
 
-  // Frequency-based
+  const start = new Date(dateStr + 'T00:00:00');
+  const end   = new Date(start);
+  if      (scale === 'week')    end.setDate(end.getDate() + 6);
+  else if (scale === 'month')   { end.setMonth(end.getMonth() + 1);     end.setDate(0); }
+  else if (scale === 'quarter') { end.setMonth(end.getMonth() + 3);     end.setDate(0); }
+  else if (scale === 'year')    { end.setFullYear(end.getFullYear()+1); end.setDate(0); }
+
+  const cursor = new Date(start);
+  while (cursor <= end) {
+    const ds = toLocalYMD(cursor);
+    if (isDueDay(param, ds)) return true;
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return false;
+}
+
+function isDueDay(param, dateStr) {
+  if (param.schedule_type === 'specific') {
+    const dates = (param.specific_dates || '').split(',').filter(Boolean);
+    return dates.includes(dateStr);
+  }
+
   const d = new Date(dateStr + 'T00:00:00');
   const dow = d.getDay();
   switch (param.frequency) {
@@ -55,7 +71,7 @@ export function getDueDatesInRange(param, fromStr, toStr) {
   const cursor = new Date(fromStr + 'T00:00:00');
   const end    = new Date(toStr + 'T00:00:00');
   while (cursor <= end) {
-    const ds = cursor.toISOString().slice(0, 10);
+    const ds = toLocalYMD(cursor);
     if (isDue(param, ds, 'day')) out.push(ds);
     cursor.setDate(cursor.getDate() + 1);
   }

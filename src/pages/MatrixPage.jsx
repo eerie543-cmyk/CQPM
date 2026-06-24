@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils';
 import { useMatrix } from '@/hooks/useMatrix';
 import { useAuth } from '@/hooks/useAuth';
 import { useRemoteConfigContext } from '@/hooks/useRemoteConfigContext';
-import { isDue, isOutOfRange, todayStr, addDays } from '@/lib/schedule';
+import { isDue, isOutOfRange, todayStr, addDays, toLocalYMD } from '@/lib/schedule';
 import EntryModal from '@/components/EntryModal';
 import ReviewModal from '@/components/ReviewModal';
 import ParamBuilderModal from '@/components/ParamBuilderModal';
@@ -43,20 +43,20 @@ function getColumnDates(anchorDate, scale, count) {
   let cursor = new Date(anchorDate + 'T00:00:00');
 
   if (scale === 'day') {
-    for (let i = 0; i < count; i++) { dates.push(cursor.toISOString().slice(0, 10)); cursor.setDate(cursor.getDate() + 1); }
+    for (let i = 0; i < count; i++) { dates.push(toLocalYMD(cursor)); cursor.setDate(cursor.getDate() + 1); }
   } else if (scale === 'week') {
     cursor.setDate(cursor.getDate() - cursor.getDay());
-    for (let i = 0; i < count; i++) { dates.push(cursor.toISOString().slice(0, 10)); cursor.setDate(cursor.getDate() + 7); }
+    for (let i = 0; i < count; i++) { dates.push(toLocalYMD(cursor)); cursor.setDate(cursor.getDate() + 7); }
   } else if (scale === 'month') {
     cursor.setDate(1);
-    for (let i = 0; i < count; i++) { dates.push(cursor.toISOString().slice(0, 10)); cursor.setMonth(cursor.getMonth() + 1); }
+    for (let i = 0; i < count; i++) { dates.push(toLocalYMD(cursor)); cursor.setMonth(cursor.getMonth() + 1); }
   } else if (scale === 'quarter') {
     const q = Math.floor(cursor.getMonth() / 3);
     cursor = new Date(cursor.getFullYear(), q * 3, 1);
-    for (let i = 0; i < count; i++) { dates.push(cursor.toISOString().slice(0, 10)); cursor.setMonth(cursor.getMonth() + 3); }
+    for (let i = 0; i < count; i++) { dates.push(toLocalYMD(cursor)); cursor.setMonth(cursor.getMonth() + 3); }
   } else {
     cursor = new Date(cursor.getFullYear(), 0, 1);
-    for (let i = 0; i < count; i++) { dates.push(cursor.toISOString().slice(0, 10)); cursor.setFullYear(cursor.getFullYear() + 1); }
+    for (let i = 0; i < count; i++) { dates.push(toLocalYMD(cursor)); cursor.setFullYear(cursor.getFullYear() + 1); }
   }
   return dates;
 }
@@ -109,7 +109,7 @@ function CellStatus({ status, isDueFlag, isToday, critical, outOfRange, requires
     </div>
   );
   return (
-    <div className={cn('w-full h-full flex items-center justify-center rounded', isToday && 'ring-1 ring-primary/40')}>
+    <div className={cn('w-full h-full flex items-center justify-center rounded', isToday && 'ring-1 ring-yellow-400/50')}>
       <Circle className={cn('w-4 h-4', critical ? 'text-primary/80' : 'text-muted-foreground/40')} />
     </div>
   );
@@ -148,6 +148,7 @@ export default function MatrixPage({ dept }) {
   const [exporting,  setExporting]= useState(false);  // open export modal
   const [query,      setQuery]    = useState('');     // row filter
   const [dayDetail,  setDayDetail]= useState(null);   // date string for details panel
+  const [collapsedY, setCollapsedY] = useState(false); // toggle collapse Y-axis (parameter column)
 
   const containerRef = useRef(null);
   const [isGrabbing, setIsGrabbing] = useState(false);
@@ -309,7 +310,7 @@ export default function MatrixPage({ dept }) {
     else if (scale === 'month')   d.setMonth(d.getMonth()     + dir * step);
     else if (scale === 'quarter') d.setMonth(d.getMonth()     + dir * step * 3);
     else                          d.setFullYear(d.getFullYear() + dir * step);
-    setAnchor(d.toISOString().slice(0, 10));
+    setAnchor(toLocalYMD(d));
   }
 
   function jumpToToday() { setAnchor(addDays(today, -7)); }
@@ -501,17 +502,39 @@ export default function MatrixPage({ dept }) {
                 "w-full border-collapse text-xs transition-opacity duration-200",
                 loading && "opacity-75 pointer-events-none"
               )}
-              style={{ minWidth: `${COL_COUNT * 52 + 240}px` }}
+              style={{ minWidth: `${COL_COUNT * 52 + (collapsedY ? 48 : 240)}px` }}
             >
             <thead>
               <tr>
-                <th className="sticky left-0 z-10 bg-card border-r border-b px-2 py-1.5 text-left w-56">
-                  <div className="relative">
-                    <Search className="w-3 h-3 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" />
-                    <input type="text" value={query} onChange={e => setQuery(e.target.value)}
-                      placeholder="Parameter…"
-                      className="h-6 w-full rounded border bg-background pl-7 pr-2 text-[11px] font-normal normal-case tracking-normal focus:outline-none focus:ring-1 focus:ring-ring" />
-                  </div>
+                <th className={cn(
+                  "sticky left-0 z-10 bg-card border-r border-b text-left transition-all duration-200",
+                  collapsedY ? "w-12 px-1 py-1.5 text-center" : "w-56 px-2 py-1.5"
+                )}>
+                  {collapsedY ? (
+                    <button
+                      onClick={() => setCollapsedY(false)}
+                      className="p-1 rounded hover:bg-muted mx-auto flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+                      title="Expand parameters"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-1.5">
+                      <div className="relative flex-1">
+                        <Search className="w-3 h-3 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" />
+                        <input type="text" value={query} onChange={e => setQuery(e.target.value)}
+                          placeholder="Parameter…"
+                          className="h-6 w-full rounded border bg-background pl-7 pr-2 text-[11px] font-normal normal-case tracking-normal focus:outline-none focus:ring-1 focus:ring-ring" />
+                      </div>
+                      <button
+                        onClick={() => setCollapsedY(true)}
+                        className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
+                        title="Collapse parameters"
+                      >
+                        <ChevronLeft className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
                 </th>
                 {cols.map(col => {
                   const isToday = col === today;
@@ -521,7 +544,7 @@ export default function MatrixPage({ dept }) {
                       onClick={() => { if (!isDraggingRef.current) setDayDetail(col); }}
                       className={cn(
                         'border-b border-r px-1 py-2 text-center font-medium w-12 cursor-pointer hover:bg-muted/50 transition-colors',
-                        isToday ? 'bg-primary/5 text-primary' : 'text-muted-foreground',
+                        isToday ? 'bg-yellow-400/25 dark:bg-yellow-400/15 text-yellow-600 dark:text-yellow-400 font-semibold' : 'text-muted-foreground',
                       )}
                       title={`Click to view tasks and entries for ${formatDate(col, scale)}`}
                     >
@@ -529,7 +552,7 @@ export default function MatrixPage({ dept }) {
                         {formatDate(col, scale).split(' ').map((part, i) => (
                           <div key={i} className={i === 0 ? 'font-semibold' : 'text-[9px] opacity-70'}>{part}</div>
                         ))}
-                        {isToday && <div className="w-1 h-1 bg-primary rounded-full mx-auto mt-0.5" />}
+                        {isToday && <div className="w-1 h-1 bg-yellow-500 dark:bg-yellow-400 rounded-full mx-auto mt-0.5" />}
                       </div>
                     </th>
                   );
@@ -539,8 +562,11 @@ export default function MatrixPage({ dept }) {
               {/* Per-day lock / approval status (day scale only) */}
               {scale === 'day' && (
                 <tr>
-                  <th className="sticky left-0 z-10 bg-card border-r border-b px-3 py-1 text-left text-[9px] font-medium uppercase tracking-widest text-muted-foreground/70 w-56">
-                    Day status
+                  <th className={cn(
+                    "sticky left-0 z-10 bg-card border-r border-b text-left text-[9px] font-medium uppercase tracking-widest text-muted-foreground/70 transition-all duration-200",
+                    collapsedY ? "w-12 px-1 py-1 text-center truncate text-[8px]" : "w-56 px-3 py-1"
+                  )}>
+                    {collapsedY ? "Status" : "Day status"}
                   </th>
                   {cols.map(col => {
                     const lock = dayLock(col);
@@ -558,7 +584,7 @@ export default function MatrixPage({ dept }) {
                     : '';
                     return (
                       <th key={col} title={title}
-                        className={cn('border-b border-r py-1 text-center', col === today && 'bg-primary/5')}>
+                        className={cn('border-b border-r py-1 text-center', col === today && 'bg-yellow-400/20 dark:bg-yellow-400/10')}>
                         {icon}
                       </th>
                     );
@@ -577,20 +603,35 @@ export default function MatrixPage({ dept }) {
               {shownParams.map((param, pi) => (
                 <tr key={param.id} className={cn('hover:bg-muted/30 transition-colors', pi % 2 === 0 ? '' : 'bg-muted/10')}>
                   {/* Parameter label */}
-                  <td className="sticky left-0 z-10 bg-card border-r border-b px-3 py-1.5 w-56">
-                    <div className="flex items-center gap-1.5">
-                      {param.critical === 1 && (
-                        <span className="w-1.5 h-1.5 rounded-full bg-red-400 flex-shrink-0" title="Critical (2× weight)" />
-                      )}
-                      <div>
-                        <p className="font-medium text-foreground truncate max-w-[180px]">{param.name}</p>
-                        <p className="text-[9px] text-muted-foreground capitalize">
-                          {param.schedule_type === 'specific'
-                            ? `${(param.specific_dates || '').split(',').filter(Boolean).length} date(s)`
-                            : param.frequency}
-                        </p>
+                  <td className={cn(
+                    "sticky left-0 z-10 bg-card border-r border-b transition-all duration-200",
+                    collapsedY ? "w-12 px-1 py-1.5 text-center" : "w-56 px-3 py-1.5"
+                  )}>
+                    {collapsedY ? (
+                      <div className="flex items-center justify-center min-h-[28px]" title={`${param.name} (${param.frequency})`}>
+                        {param.critical === 1 ? (
+                          <span className="w-2.5 h-2.5 rounded-full bg-red-500 flex-shrink-0 shadow-sm animate-pulse" title="Critical Parameter" />
+                        ) : (
+                          <span className="text-[10px] font-mono font-bold text-muted-foreground/80">
+                            {param.name.slice(0, 2).toUpperCase()}
+                          </span>
+                        )}
                       </div>
-                    </div>
+                    ) : (
+                      <div className="flex items-center gap-1.5">
+                        {param.critical === 1 && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-red-400 flex-shrink-0" title="Critical (2× weight)" />
+                        )}
+                        <div>
+                          <p className="font-medium text-foreground truncate max-w-[180px]">{param.name}</p>
+                          <p className="text-[9px] text-muted-foreground capitalize">
+                            {param.schedule_type === 'specific'
+                              ? `${(param.specific_dates || '').split(',').filter(Boolean).length} date(s)`
+                              : param.frequency}
+                          </p>
+                        </div>
+                      </div>
+                    )}
                   </td>
 
                   {/* Cells */}
@@ -607,7 +648,7 @@ export default function MatrixPage({ dept }) {
                         title={cellTitle(param, col, e, due, oor)}
                         className={cn(
                           'border-b border-r p-0.5 h-9 w-12 text-center',
-                          isToday && 'bg-primary/5',
+                          isToday && 'bg-yellow-400/20 dark:bg-yellow-400/10',
                           locked && 'bg-muted/30',
                           due && !isFuture && 'cursor-pointer hover:bg-muted/50',
                           !due && 'opacity-40'
@@ -681,8 +722,8 @@ export default function MatrixPage({ dept }) {
           entryMap={entryMap}
           isAdmin={isAdmin}
           isLockedForUser={isLockedForUser}
-          onRowClick={(param) => {
-            handleCellClick(param, dayDetail);
+          onRowClick={(param, dateStr) => {
+            handleCellClick(param, dateStr);
             setDayDetail(null);
           }}
           onClose={() => setDayDetail(null)}

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { X, Plus, Loader2, ChevronLeft, ChevronRight, CalendarDays, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
+import { toLocalYMD } from '@/lib/schedule';
 
 const WEEK_DAYS = [
   { val: '1', label: 'Mon' }, { val: '2', label: 'Tue' },
@@ -18,7 +19,7 @@ const DEPT_NAMES = {
 
 // ── Inline calendar date picker ───────────────────────────────────────────────
 function CalendarPicker({ selected, onChange }) {
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = toLocalYMD(new Date());
   const [vy, setVy] = useState(() => new Date().getFullYear());
   const [vm, setVm] = useState(() => new Date().getMonth());
 

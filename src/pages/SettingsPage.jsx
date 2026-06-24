@@ -10,14 +10,15 @@ import { useTheme } from '@/hooks/useTheme';
 import { useAuth } from '@/hooks/useAuth';
 import { useRemoteConfigContext } from '@/hooks/useRemoteConfigContext';
 import { INACTIVITY_LS_KEY } from '@/hooks/useInactivityLogout';
+import { toLocalYMD } from '@/lib/schedule';
 import { EXPORT_DEFAULTS_KEY } from '@/components/ExportModal';
 
 // ── localStorage helpers ──────────────────────────────────────────────────────
 function computeFromDate(range) {
   const d = new Date();
-  if (range === 'last_7')  { d.setDate(d.getDate() - 6);  return d.toISOString().slice(0, 10); }
-  if (range === 'last_30') { d.setDate(d.getDate() - 29); return d.toISOString().slice(0, 10); }
-  if (range === 'last_90') { d.setDate(d.getDate() - 89); return d.toISOString().slice(0, 10); }
+  if (range === 'last_7')  { d.setDate(d.getDate() - 6);  return toLocalYMD(d); }
+  if (range === 'last_30') { d.setDate(d.getDate() - 29); return toLocalYMD(d); }
+  if (range === 'last_90') { d.setDate(d.getDate() - 89); return toLocalYMD(d); }
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
 }
