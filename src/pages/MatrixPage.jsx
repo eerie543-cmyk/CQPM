@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
-import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut, CheckCircle2, XCircle, Circle, AlertCircle, AlertTriangle, Minus, Plus, Lock, RotateCcw, FileSpreadsheet, Search } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut, CheckCircle2, XCircle, Circle, AlertCircle, AlertTriangle, Minus, Plus, Lock, RotateCcw, RefreshCw, FileSpreadsheet, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useMatrix } from '@/hooks/useMatrix';
 import { useAuth } from '@/hooks/useAuth';
@@ -191,7 +191,7 @@ export default function MatrixPage({ dept }) {
       // A. Touchpad pinch-to-zoom (ctrlKey is true)
       if (e.ctrlKey) {
         e.preventDefault();
-        const dir = e.deltaY < 0 ? 'in' : 'out'; // Pinch out/zoom in vs pinch in/zoom out
+        const dir = e.deltaY < 0 ? 'out' : 'in'; // Pinch out/zoom out vs pinch in/zoom in
         handleZoomThrottled(dir);
         return;
       }
@@ -473,8 +473,11 @@ export default function MatrixPage({ dept }) {
           isGrabbing ? "cursor-grabbing select-none" : "cursor-grab"
         )}
       >
-        {loading ? (
-          <div className="flex items-center justify-center h-40 text-muted-foreground text-sm">Loading…</div>
+        {params.length === 0 && loading ? (
+          <div className="flex items-center justify-center h-40 text-muted-foreground text-sm">
+            <RefreshCw className="w-4 h-4 animate-spin mr-2 text-primary" />
+            Loading…
+          </div>
         ) : params.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-48 gap-3 text-muted-foreground text-sm">
             <p>No parameters defined for {DEPT_NAMES[dept]} yet.</p>
@@ -486,7 +489,20 @@ export default function MatrixPage({ dept }) {
             )}
           </div>
         ) : (
-          <table className="w-full border-collapse text-xs" style={{ minWidth: `${COL_COUNT * 52 + 240}px` }}>
+          <div className="relative">
+            {loading && (
+              <div className="absolute top-2 right-4 flex items-center gap-1.5 bg-background/80 border border-border/50 text-[10px] px-2.5 py-0.5 rounded-full shadow-sm text-muted-foreground backdrop-blur z-20 pointer-events-none animate-pulse">
+                <RefreshCw className="w-3 h-3 animate-spin text-primary" />
+                Updating...
+              </div>
+            )}
+            <table
+              className={cn(
+                "w-full border-collapse text-xs transition-opacity duration-200",
+                loading && "opacity-75 pointer-events-none"
+              )}
+              style={{ minWidth: `${COL_COUNT * 52 + 240}px` }}
+            >
             <thead>
               <tr>
                 <th className="sticky left-0 z-10 bg-card border-r border-b px-2 py-1.5 text-left w-56">
@@ -613,6 +629,7 @@ export default function MatrixPage({ dept }) {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 
