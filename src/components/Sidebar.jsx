@@ -4,7 +4,6 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { useRemoteConfigContext } from '@/hooks/useRemoteConfigContext';
 import { useTheme } from '@/hooks/useTheme';
-import UsersPanel from './UsersPanel';
 
 const DEPTS = [
   { id: 'serology',     label: 'Serology',         symbol: '⊕' },
@@ -33,7 +32,6 @@ export default function Sidebar({ page, onPage, activeDept, onDept, isAdmin, mat
   const { logout } = useAuth();
   const { appVersion, status, lastSync, configured } = useRemoteConfigContext();
   const { dark, toggle: toggleTheme } = useTheme();
-  const [usersOpen, setUsersOpen] = useState(false);
 
   const depts = visibleDepts ? DEPTS.filter(d => visibleDepts.includes(d.id)) : DEPTS;
 
@@ -142,24 +140,21 @@ export default function Sidebar({ page, onPage, activeDept, onDept, isAdmin, mat
 
           {isAdmin && (
             <button
-              onClick={() => setUsersOpen(v => !v)}
+              onClick={() => onPage('users')}
               className={cn(
                 'group/users w-full flex items-center gap-2.5 px-2 py-1.5 rounded-md text-left text-xs transition-all duration-150',
-                usersOpen
-                  ? 'bg-muted text-foreground font-medium'
+                page === 'users'
+                  ? 'bg-primary/10 text-foreground font-medium'
                   : 'text-muted-foreground hover:bg-muted hover:text-foreground'
               )}
             >
               <Users className={cn(
                 'w-3.5 h-3.5 flex-shrink-0 transition-all duration-150',
-                usersOpen
-                  ? 'text-foreground'
+                page === 'users'
+                  ? 'text-primary'
                   : 'group-hover/users:text-primary group-hover/users:scale-110'
               )} />
               <span>Users</span>
-              {usersOpen && (
-                <span className="ml-auto w-1.5 h-1.5 rounded-full bg-muted-foreground/50" />
-              )}
             </button>
           )}
 
@@ -224,9 +219,6 @@ export default function Sidebar({ page, onPage, activeDept, onDept, isAdmin, mat
           </div>
         </div>
       </aside>
-
-      {/* Users slide-out panel */}
-      {usersOpen && <UsersPanel onClose={() => setUsersOpen(false)} />}
     </>
   );
 }

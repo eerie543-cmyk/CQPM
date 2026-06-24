@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { X, Plus, Trash2, ShieldCheck, Loader2, Eye, EyeOff } from 'lucide-react';
+import { Plus, Trash2, ShieldCheck, Loader2, Eye, EyeOff } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 
@@ -71,7 +71,7 @@ function AddUserForm({ token, onCreated, onCancel }) {
   }
 
   return (
-    <div className="px-6 py-4 border-b bg-muted/20 flex flex-col gap-3">
+    <div className="px-6 py-4 border rounded-xl bg-muted/20 flex flex-col gap-3">
       <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">New Account</p>
 
       <div className="grid grid-cols-2 gap-3">
@@ -154,8 +154,8 @@ function AddUserForm({ token, onCreated, onCancel }) {
   );
 }
 
-// ── Panel ─────────────────────────────────────────────────────────────────────
-export default function UsersPanel({ onClose }) {
+// ── Page Panel ────────────────────────────────────────────────────────────────
+export default function UsersPanel() {
   const { token, user: me } = useAuth();
   const [users,    setUsers]    = useState([]);
   const [loading,  setLoading]  = useState(true);
@@ -178,52 +178,48 @@ export default function UsersPanel({ onClose }) {
   }
 
   return (
-    <div className="absolute inset-0 z-40">
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-
-      <div className="absolute inset-y-0 left-56 right-0 bg-card flex flex-col">
-
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b flex-shrink-0">
-          <div>
-            <h2 className="text-sm font-semibold">User Management</h2>
-            <p className="text-[11px] text-muted-foreground mt-0.5">
-              {users.length} account{users.length !== 1 ? 's' : ''} · new users must change password on first login
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setShowAdd(v => !v)}
-              className={cn(
-                'flex items-center gap-1.5 h-8 px-3 text-xs rounded-md font-medium transition-colors',
-                showAdd ? 'bg-primary text-primary-foreground' : 'border hover:bg-muted text-muted-foreground'
-              )}>
-              <Plus className="w-3.5 h-3.5" /> Add User
-            </button>
-            <button onClick={onClose} className="p-1.5 rounded-md hover:bg-muted text-muted-foreground transition-colors">
-              <X className="w-4 h-4" />
-            </button>
-          </div>
+    <div className="px-8 py-6 space-y-6 max-w-4xl">
+      {/* Header */}
+      <div className="flex items-center justify-between border-b pb-4 flex-shrink-0 animate-fade-in">
+        <div>
+          <h1 className="text-base font-semibold">User Management</h1>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {users.length} account{users.length !== 1 ? 's' : ''} · new users must change password on first login
+          </p>
         </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowAdd(v => !v)}
+            className={cn(
+              'flex items-center gap-1.5 h-8 px-3 text-xs rounded-md font-medium transition-colors',
+              showAdd ? 'bg-primary text-primary-foreground border-primary' : 'border hover:bg-muted text-muted-foreground'
+            )}>
+            <Plus className="w-3.5 h-3.5" /> Add User
+          </button>
+        </div>
+      </div>
 
-        {/* Add form */}
-        {showAdd && (
+      {/* Add form */}
+      {showAdd && (
+        <div className="animate-slide-down">
           <AddUserForm token={token}
             onCreated={() => { setShowAdd(false); load(); }}
             onCancel={() => setShowAdd(false)} />
-        )}
+        </div>
+      )}
 
-        {/* User list */}
-        <div className="flex-1 overflow-y-auto">
-          {loading ? (
-            <div className="flex items-center justify-center h-32 text-sm text-muted-foreground">Loading…</div>
-          ) : (
-            GROUPS.map(group => {
+      {/* User list */}
+      <div className="flex-1 overflow-y-auto animate-fade-in">
+        {loading ? (
+          <div className="flex items-center justify-center h-32 text-sm text-muted-foreground">Loading…</div>
+        ) : (
+          <div className="rounded-xl border bg-card divide-y overflow-hidden shadow-sm">
+            {GROUPS.map(group => {
               const members = users.filter(group.filter);
               return (
-                <div key={group.key}>
+                <div key={group.key} className="py-4 first:pt-3 last:pb-3">
                   {/* Group header */}
-                  <div className="flex items-center gap-3 px-6 pt-5 pb-1.5">
+                  <div className="flex items-center gap-3 px-6 pb-2">
                     {group.symbol
                       ? <span className="font-mono text-[13px] text-muted-foreground leading-none">{group.symbol}</span>
                       : <ShieldCheck className="w-3.5 h-3.5 text-muted-foreground" />}
@@ -232,26 +228,28 @@ export default function UsersPanel({ onClose }) {
                   </div>
 
                   {/* Members */}
-                  {members.length === 0 ? (
-                    <p className="px-6 py-2 text-xs text-muted-foreground italic">None assigned</p>
-                  ) : (
-                    members.map(u => (
-                      <UserRow key={u.id} user={u} isMe={u.id === me?.sub}
-                        onDelete={handleDelete} deleting={deleting} />
-                    ))
-                  )}
+                  <div className="divide-y divide-border/40">
+                    {members.length === 0 ? (
+                      <p className="px-6 py-2.5 text-xs text-muted-foreground italic">None assigned</p>
+                    ) : (
+                      members.map(u => (
+                        <UserRow key={u.id} user={u} isMe={u.id === me?.sub}
+                          onDelete={handleDelete} deleting={deleting} />
+                      ))
+                    )}
+                  </div>
                 </div>
               );
-            })
-          )}
-        </div>
+            })}
+          </div>
+        )}
+      </div>
 
-        {/* Footer */}
-        <div className="px-6 py-3 border-t flex-shrink-0">
-          <p className="text-[10px] text-muted-foreground">
-            Passwords hashed with bcrypt · JWT sessions expire after 10 h
-          </p>
-        </div>
+      {/* Footer */}
+      <div className="pt-4 border-t flex-shrink-0 text-muted-foreground">
+        <p className="text-[10px]">
+          Passwords hashed with bcrypt · JWT sessions expire after 10 h
+        </p>
       </div>
     </div>
   );
