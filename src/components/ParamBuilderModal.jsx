@@ -292,7 +292,7 @@ export default function ParamBuilderModal({ dept, existing, onSave, onClose, mod
             </h2>
             <p className="text-xs text-muted-foreground mt-0.5">
               {isStaff
-                ? 'Your request will be sent to an admin for approval'
+                ? `${DEPT_NAMES[dept ?? form.department]} · Your request will be sent to an admin for approval`
                 : DEPT_NAMES[isEdit ? existing.department : form.department]}
             </p>
           </div>
@@ -304,16 +304,24 @@ export default function ParamBuilderModal({ dept, existing, onSave, onClose, mod
         {/* Scrollable body */}
         <div className="p-5 flex flex-col gap-4 overflow-y-auto">
 
-          {/* Department (create only) */}
+          {/* Department — dropdown for admin create, locked badge for staff */}
           {!isEdit && (
-            <Field label="Department">
-              <select value={form.department} onChange={e => set('department', e.target.value)}
-                className="h-9 rounded-md border bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring w-full">
-                <option value="serology">Serology</option>
-                <option value="molecularBio">Molecular Biology</option>
-                <option value="microbiology">Microbiology</option>
-              </select>
-            </Field>
+            isStaff ? (
+              <div className="flex items-center gap-2 p-2.5 rounded-md border bg-muted/30">
+                <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Department</span>
+                <span className="text-xs font-medium text-foreground">{DEPT_NAMES[dept ?? form.department]}</span>
+                <span className="ml-auto text-[9px] px-1.5 py-0.5 rounded-full border bg-muted text-muted-foreground">Locked to your dept</span>
+              </div>
+            ) : (
+              <Field label="Department">
+                <select value={form.department} onChange={e => set('department', e.target.value)}
+                  className="h-9 rounded-md border bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring w-full">
+                  <option value="serology">Serology</option>
+                  <option value="molecularBio">Molecular Biology</option>
+                  <option value="microbiology">Microbiology</option>
+                </select>
+              </Field>
+            )
           )}
 
           {/* Name */}

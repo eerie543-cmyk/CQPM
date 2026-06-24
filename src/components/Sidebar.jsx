@@ -15,7 +15,7 @@ const DEPTS = [
 const NAV = [
   { id: 'today',      label: 'Today',      icon: ClipboardCheck, adminOnly: false },
   { id: 'matrix',     label: 'Matrix',     icon: LayoutGrid,     adminOnly: false },
-  { id: 'parameters', label: 'Parameters', icon: CalendarDays,   adminOnly: true  },
+  { id: 'parameters', label: 'Parameters', icon: CalendarDays,   adminOnly: false },
   { id: 'approvals',  label: 'Approvals',  icon: Inbox,          adminOnly: true  },
 ];
 

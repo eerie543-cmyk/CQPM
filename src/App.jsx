@@ -67,7 +67,8 @@ function AppShell() {
   const showBanners   = announcement.active || updateInfo.needed;
 
   // Pages can be switched off remotely; fall back to Today if the current one is unavailable.
-  const adminPages = ['parameters', 'approvals'];
+  // 'parameters' is now accessible by staff (they see Request Parameter button, not Add).
+  const adminPages = ['approvals'];
   let activePage = page;
   if (adminPages.includes(activePage) && !adminEnabled) activePage = 'today';
   if (activePage === 'matrix'   && !matrixEnabled)      activePage = 'today';

@@ -405,9 +405,14 @@ ipcMain.handle('paramreq:submit', async (_e, { token, data } = {}) => {
   try { payload = verifyToken(token); } catch { return { error: 'Session expired.' }; }
   if (!data?.name || !data?.department)
     return { error: 'Name and department are required.' };
+  // Staff may only request for their own department
+  if (payload.role === 'staff' && payload.department !== data.department)
+    return { error: 'You can only request parameters for your own department.' };
   try {
     const result = await submitParamRequest({
       ...data,
+      // Always use the token department for staff (belt-and-suspenders)
+      department:      payload.role === 'staff' ? payload.department : data.department,
       requestedById:   payload.sub,
       requestedByName: payload.displayName,
     });
