@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut, CheckCircle2, XCircle, Circle, AlertCircle, AlertTriangle, Minus, Plus, Lock, RotateCcw, FileSpreadsheet, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useMatrix } from '@/hooks/useMatrix';
@@ -148,6 +148,127 @@ export default function MatrixPage({ dept }) {
   const [exporting,  setExporting]= useState(false);  // open export modal
   const [query,      setQuery]    = useState('');     // row filter
   const [dayDetail,  setDayDetail]= useState(null);   // date string for details panel
+
+  const containerRef = useRef(null);
+  const [isGrabbing, setIsGrabbing] = useState(false);
+  const isDraggingRef = useRef(false);
+  const dragStartRef = useRef({ x: 0, active: false });
+  const accumXRef = useRef(0);
+  const lastSwipeTimeRef = useRef(0);
+  const lastZoomTimeRef = useRef(0);
+
+  // Dynamic ref to navigate to avoid recreating useEffect on every navigate change
+  const navigateRef = useRef(navigate);
+  navigateRef.current = navigate;
+
+  // Zoom function
+  const handleZoom = useCallback((direction) => {
+    setScale(curr => {
+      const idx = SCALES.indexOf(curr);
+      if (direction === 'out' && idx < SCALES.length - 1) {
+        return SCALES[idx + 1];
+      }
+      if (direction === 'in' && idx > 0) {
+        return SCALES[idx - 1];
+      }
+      return curr;
+    });
+  }, []);
+
+  const handleZoomThrottled = useCallback((direction) => {
+    const now = Date.now();
+    if (now - lastZoomTimeRef.current < 200) return;
+    lastZoomTimeRef.current = now;
+    handleZoom(direction);
+  }, [handleZoom]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    // 1. Wheel event handler for zoom & horizontal swipe
+    const handleWheel = (e) => {
+      // A. Touchpad pinch-to-zoom (ctrlKey is true)
+      if (e.ctrlKey) {
+        e.preventDefault();
+        const dir = e.deltaY < 0 ? 'in' : 'out'; // Pinch out/zoom in vs pinch in/zoom out
+        handleZoomThrottled(dir);
+        return;
+      }
+
+      // B. Scroll wheel zoom on headers (timeline)
+      const targetHeader = e.target.closest('thead');
+      if (targetHeader) {
+        e.preventDefault();
+        const dir = e.deltaY < 0 ? 'out' : 'in'; // Scroll up zooms out (day to year), scroll down zooms in
+        handleZoomThrottled(dir);
+        return;
+      }
+
+      // C. Double-finger slide navigation (horizontal scroll deltaX)
+      if (Math.abs(e.deltaX) > 3) {
+        e.preventDefault();
+        const now = Date.now();
+        if (now - lastSwipeTimeRef.current > 150) {
+          accumXRef.current += e.deltaX;
+          if (Math.abs(accumXRef.current) > 60) {
+            const dir = accumXRef.current > 0 ? -1 : 1; // deltaX > 0 means slide left -> past; deltaX < 0 means slide right -> future
+            navigateRef.current(dir);
+            accumXRef.current = 0;
+            lastSwipeTimeRef.current = now;
+          }
+        }
+      }
+    };
+
+    // 2. Mouse drag-to-navigate event handlers
+    const handleMouseDown = (e) => {
+      // Only handle left clicks
+      if (e.button !== 0) return;
+      dragStartRef.current = { x: e.clientX, active: true };
+      setIsGrabbing(true);
+    };
+
+    const handleMouseMove = (e) => {
+      if (!dragStartRef.current.active) return;
+      
+      const diffX = dragStartRef.current.x - e.clientX;
+      const absDiffX = Math.abs(diffX);
+
+      if (absDiffX > 5) {
+        isDraggingRef.current = true;
+      }
+
+      if (absDiffX > 80) {
+        const dir = diffX > 0 ? 1 : -1; // Drag left -> navigate(1) (future); Drag right -> navigate(-1) (past)
+        navigateRef.current(dir);
+        dragStartRef.current.x = e.clientX; // Update starting x for smooth continuous dragging
+      }
+    };
+
+    const handleMouseUp = () => {
+      if (dragStartRef.current.active) {
+        dragStartRef.current.active = false;
+        setIsGrabbing(false);
+        // Small delay to ensure click handlers check isDraggingRef before it is reset
+        setTimeout(() => {
+          isDraggingRef.current = false;
+        }, 50);
+      }
+    };
+
+    container.addEventListener('wheel', handleWheel, { passive: false });
+    container.addEventListener('mousedown', handleMouseDown);
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      container.removeEventListener('wheel', handleWheel);
+      container.removeEventListener('mousedown', handleMouseDown);
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [handleZoomThrottled]);
 
   const cols = useMemo(() => getColumnDates(anchorDate, scale, COL_COUNT), [anchorDate, scale]);
   const { params, entries, signoffs, closures, loading, reload } = useMatrix(dept, cols[0], cols[cols.length - 1]);
@@ -345,7 +466,13 @@ export default function MatrixPage({ dept }) {
       </div>
 
       {/* Matrix */}
-      <div className="flex-1 overflow-auto">
+      <div
+        ref={containerRef}
+        className={cn(
+          "flex-1 overflow-auto",
+          isGrabbing ? "cursor-grabbing select-none" : "cursor-grab"
+        )}
+      >
         {loading ? (
           <div className="flex items-center justify-center h-40 text-muted-foreground text-sm">Loading…</div>
         ) : params.length === 0 ? (
@@ -375,7 +502,7 @@ export default function MatrixPage({ dept }) {
                   const isPast  = col < today;
                   return (
                     <th key={col}
-                      onClick={() => setDayDetail(col)}
+                      onClick={() => { if (!isDraggingRef.current) setDayDetail(col); }}
                       className={cn(
                         'border-b border-r px-1 py-2 text-center font-medium w-12 cursor-pointer hover:bg-muted/50 transition-colors',
                         isToday ? 'bg-primary/5 text-primary' : 'text-muted-foreground',
@@ -460,7 +587,7 @@ export default function MatrixPage({ dept }) {
                     const locked   = scale === 'day' && isLockedForUser(col);
                     return (
                       <td key={col}
-                        onClick={() => due && !isFuture && handleCellClick(param, col)}
+                        onClick={() => due && !isFuture && !isDraggingRef.current && handleCellClick(param, col)}
                         title={cellTitle(param, col, e, due, oor)}
                         className={cn(
                           'border-b border-r p-0.5 h-9 w-12 text-center',
