@@ -9,6 +9,7 @@ import EntryModal from '@/components/EntryModal';
 import ReviewModal from '@/components/ReviewModal';
 import ParamBuilderModal from '@/components/ParamBuilderModal';
 import ExportModal from '@/components/ExportModal';
+import DayDetailPanel from '@/components/DayDetailPanel';
 
 const SCALES = ['day', 'week', 'month', 'quarter', 'year'];
 const SCALE_LABELS = { day: 'Daily', week: 'Weekly', month: 'Monthly', quarter: 'Quarterly', year: 'Yearly' };
@@ -146,6 +147,7 @@ export default function MatrixPage({ dept }) {
   const [addParam,   setAddParam] = useState(false);  // open param builder
   const [exporting,  setExporting]= useState(false);  // open export modal
   const [query,      setQuery]    = useState('');     // row filter
+  const [dayDetail,  setDayDetail]= useState(null);   // date string for details panel
 
   const cols = useMemo(() => getColumnDates(anchorDate, scale, COL_COUNT), [anchorDate, scale]);
   const { params, entries, signoffs, closures, loading, reload } = useMatrix(dept, cols[0], cols[cols.length - 1]);
@@ -373,13 +375,12 @@ export default function MatrixPage({ dept }) {
                   const isPast  = col < today;
                   return (
                     <th key={col}
-                      onClick={() => isAdmin && setAddParam(true)}
+                      onClick={() => setDayDetail(col)}
                       className={cn(
-                        'border-b border-r px-1 py-2 text-center font-medium w-12',
+                        'border-b border-r px-1 py-2 text-center font-medium w-12 cursor-pointer hover:bg-muted/50 transition-colors',
                         isToday ? 'bg-primary/5 text-primary' : 'text-muted-foreground',
-                        isAdmin && 'cursor-pointer hover:bg-primary/5 transition-colors',
                       )}
-                      title={isAdmin ? `Click to add parameter (${SCALE_LABELS[scale]} view)` : undefined}
+                      title={`Click to view tasks and entries for ${formatDate(col, scale)}`}
                     >
                       <div className="leading-tight">
                         {formatDate(col, scale).split(' ').map((part, i) => (
@@ -524,6 +525,24 @@ export default function MatrixPage({ dept }) {
       {/* Export report (admin) */}
       {exporting && (
         <ExportModal dept={dept} onClose={() => setExporting(false)} />
+      )}
+
+      {/* Day Detail Panel */}
+      {dayDetail && (
+        <DayDetailPanel
+          date={dayDetail}
+          scale={scale}
+          dept={dept}
+          params={params}
+          entryMap={entryMap}
+          isAdmin={isAdmin}
+          isLockedForUser={isLockedForUser}
+          onRowClick={(param) => {
+            handleCellClick(param, dayDetail);
+            setDayDetail(null);
+          }}
+          onClose={() => setDayDetail(null)}
+        />
       )}
     </div>
   );

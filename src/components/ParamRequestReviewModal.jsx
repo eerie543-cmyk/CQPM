@@ -72,10 +72,11 @@ export default function ParamRequestReviewModal({ request, onDone, onClose }) {
   const toast      = useToast();
   const noteRef    = useRef(null);
 
-  const [action,  setAction]  = useState(null);  // 'approved' | 'rejected'
-  const [note,    setNote]    = useState('');
-  const [busy,    setBusy]    = useState(false);
-  const [error,   setError]   = useState('');
+  // 'idle' | 'rejecting' — no intermediate approve state needed
+  const [mode,   setMode]   = useState('idle');
+  const [note,   setNote]   = useState('');
+  const [busy,   setBusy]   = useState(false);
+  const [error,  setError]  = useState('');
 
   // Close on Escape
   useEffect(() => {
@@ -84,41 +85,44 @@ export default function ParamRequestReviewModal({ request, onDone, onClose }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  // Focus the note field when switching to reject mode
+  // Focus note when reject mode opens
   useEffect(() => {
-    if (action === 'rejected') setTimeout(() => noteRef.current?.focus(), 50);
-  }, [action]);
+    if (mode === 'rejecting') setTimeout(() => noteRef.current?.focus(), 50);
+  }, [mode]);
 
-  async function handleSubmit() {
+  async function handleApprove() {
     setError('');
-    if (action === 'rejected' && !note.trim()) {
+    setBusy(true);
+    try {
+      const res = await window.cqpm.paramreq.review(token, request.id, 'approved', note.trim() || null);
+      if (res?.error) { setError(res.error); return; }
+      toast(`"${request.name}" approved — parameter is now live.`, 'success');
+      onDone();
+    } finally { setBusy(false); }
+  }
+
+  async function handleReject() {
+    setError('');
+    if (!note.trim()) {
       setError('Please enter a reason for rejection.');
       noteRef.current?.focus();
       return;
     }
     setBusy(true);
     try {
-      const res = await window.cqpm.paramreq.review(token, request.id, action, note.trim() || null);
+      const res = await window.cqpm.paramreq.review(token, request.id, 'rejected', note.trim());
       if (res?.error) { setError(res.error); return; }
-      toast(
-        action === 'approved'
-          ? `"${request.name}" approved — parameter is now live.`
-          : `Request rejected.`,
-        action === 'approved' ? 'success' : 'info',
-      );
+      toast('Request rejected.', 'info');
       onDone();
-    } finally {
-      setBusy(false);
-    }
+    } finally { setBusy(false); }
   }
 
   return (
-    // Backdrop
     <div
       className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="w-full max-w-md rounded-xl border bg-card shadow-2xl flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-150">
+      <div className="w-full max-w-md rounded-xl border bg-card shadow-2xl flex flex-col max-h-[90vh]">
 
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b flex-shrink-0">
@@ -132,16 +136,17 @@ export default function ParamRequestReviewModal({ request, onDone, onClose }) {
               {fmtWhen(request.requested_at)}
             </p>
           </div>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded-md hover:bg-muted">
+          <button onClick={onClose} disabled={busy}
+            className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded-md hover:bg-muted">
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Spec — scrollable */}
-        <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-1">
+        {/* Spec */}
+        <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-3">
 
-          {/* Parameter name (prominent) */}
-          <div className="mb-3 p-3 rounded-lg border bg-muted/30">
+          {/* Parameter name */}
+          <div className="p-3 rounded-lg border bg-muted/30">
             <div className="flex items-start gap-2">
               {request.critical === 1 && (
                 <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
@@ -170,7 +175,7 @@ export default function ParamRequestReviewModal({ request, onDone, onClose }) {
             </div>
           </div>
 
-          {/* Spec table */}
+          {/* Spec rows */}
           <div className="rounded-lg border bg-muted/10 px-3 divide-y divide-border/40">
             <SpecRow label="Schedule">
               <span className="flex items-center gap-1.5">
@@ -185,104 +190,75 @@ export default function ParamRequestReviewModal({ request, onDone, onClose }) {
             </SpecRow>
           </div>
 
-          {/* Action choice */}
-          <div className="mt-4 flex flex-col gap-2">
-            <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Your decision</p>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                onClick={() => setAction('approved')}
-                className={cn(
-                  'flex items-center justify-center gap-2 h-10 rounded-lg border text-xs font-medium transition-all',
-                  action === 'approved'
-                    ? 'bg-emerald-500/15 border-emerald-500/50 text-emerald-400 shadow-sm'
-                    : 'hover:bg-emerald-500/5 hover:border-emerald-500/20 hover:text-emerald-400 text-muted-foreground'
-                )}
-              >
-                <CheckCircle2 className="w-3.5 h-3.5" />
-                Approve
-              </button>
-              <button
-                onClick={() => setAction('rejected')}
-                className={cn(
-                  'flex items-center justify-center gap-2 h-10 rounded-lg border text-xs font-medium transition-all',
-                  action === 'rejected'
-                    ? 'bg-red-500/15 border-red-500/50 text-red-400 shadow-sm'
-                    : 'hover:bg-red-500/5 hover:border-red-500/20 hover:text-red-400 text-muted-foreground'
-                )}
-              >
-                <XCircle className="w-3.5 h-3.5" />
-                Reject
-              </button>
+          {/* Rejection note (expands when Reject is clicked) */}
+          {mode === 'rejecting' && (
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-red-400">
+                Reason for rejection <span className="text-muted-foreground">(required)</span>
+              </label>
+              <textarea
+                ref={noteRef}
+                value={note}
+                onChange={e => setNote(e.target.value)}
+                placeholder="e.g. Already covered by another parameter, scope too broad…"
+                rows={3}
+                className="w-full rounded-md border border-red-500/30 bg-background px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-red-500/40 resize-none"
+              />
             </div>
-
-            {/* Rejection note */}
-            {action === 'rejected' && (
-              <div className="flex flex-col gap-1.5 mt-1">
-                <label className="text-xs font-medium text-red-400">
-                  Reason for rejection <span className="text-muted-foreground">(required)</span>
-                </label>
-                <textarea
-                  ref={noteRef}
-                  value={note}
-                  onChange={e => setNote(e.target.value)}
-                  placeholder="e.g. Already covered by another parameter, scope too broad…"
-                  rows={3}
-                  className="w-full rounded-md border border-red-500/30 bg-background px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-red-500/40 resize-none"
-                />
-              </div>
-            )}
-
-            {/* Approval note (optional) */}
-            {action === 'approved' && (
-              <div className="flex flex-col gap-1.5 mt-1">
-                <label className="text-xs font-medium text-muted-foreground">
-                  Note for staff <span className="text-muted-foreground/60">(optional)</span>
-                </label>
-                <textarea
-                  value={note}
-                  onChange={e => setNote(e.target.value)}
-                  placeholder="e.g. Approved — starts from next month"
-                  rows={2}
-                  className="w-full rounded-md border bg-background px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-ring resize-none"
-                />
-              </div>
-            )}
-          </div>
+          )}
 
           {error && (
-            <p className="text-xs text-destructive flex items-center gap-1.5 mt-1">
+            <p className="text-xs text-destructive flex items-center gap-1.5">
               <AlertTriangle className="w-3 h-3 flex-shrink-0" />
               {error}
             </p>
           )}
         </div>
 
-        {/* Footer */}
-        <div className="flex items-center justify-end gap-2 px-5 py-4 border-t flex-shrink-0">
-          <button onClick={onClose} disabled={busy}
-            className="h-8 px-3 text-xs rounded-md border hover:bg-muted transition-colors disabled:opacity-50">
-            Cancel
-          </button>
-          <button
-            onClick={handleSubmit}
-            disabled={!action || busy}
-            className={cn(
-              'h-8 px-4 text-xs rounded-md font-medium flex items-center gap-1.5 transition-all disabled:opacity-40 disabled:cursor-not-allowed',
-              action === 'approved'
-                ? 'bg-emerald-600 text-white hover:bg-emerald-500'
-                : action === 'rejected'
-                  ? 'bg-red-600 text-white hover:bg-red-500'
-                  : 'bg-primary text-primary-foreground hover:bg-primary/90'
-            )}
-          >
-            {busy
-              ? <><Loader2 className="w-3 h-3 animate-spin" /> Processing…</>
-              : action === 'approved'
-                ? <><CheckCircle2 className="w-3.5 h-3.5" /> Approve</>
-                : action === 'rejected'
-                  ? <><XCircle className="w-3.5 h-3.5" /> Reject</>
-                  : 'Select a decision'}
-          </button>
+        {/* Footer — direct action buttons */}
+        <div className="px-5 py-4 border-t flex-shrink-0">
+          {mode === 'idle' ? (
+            /* Initial state: two big direct action buttons */
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={handleApprove}
+                disabled={busy}
+                className="h-9 rounded-lg bg-emerald-600 text-white text-xs font-semibold flex items-center justify-center gap-1.5 hover:bg-emerald-500 transition-colors disabled:opacity-50"
+              >
+                {busy
+                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  : <CheckCircle2 className="w-3.5 h-3.5" />}
+                Approve
+              </button>
+              <button
+                onClick={() => { setMode('rejecting'); setError(''); }}
+                disabled={busy}
+                className="h-9 rounded-lg bg-red-600/10 border border-red-500/30 text-red-400 text-xs font-semibold flex items-center justify-center gap-1.5 hover:bg-red-600 hover:text-white transition-colors disabled:opacity-50"
+              >
+                <XCircle className="w-3.5 h-3.5" />
+                Reject
+              </button>
+            </div>
+          ) : (
+            /* Reject confirmation state */
+            <div className="flex items-center gap-2">
+              <button onClick={() => { setMode('idle'); setNote(''); setError(''); }}
+                disabled={busy}
+                className="h-8 px-3 text-xs rounded-md border hover:bg-muted transition-colors disabled:opacity-50">
+                Back
+              </button>
+              <button
+                onClick={handleReject}
+                disabled={busy}
+                className="flex-1 h-8 rounded-md bg-red-600 text-white text-xs font-semibold flex items-center justify-center gap-1.5 hover:bg-red-500 transition-colors disabled:opacity-50"
+              >
+                {busy
+                  ? <Loader2 className="w-3 h-3 animate-spin" />
+                  : <XCircle className="w-3.5 h-3.5" />}
+                Confirm Rejection
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>
