@@ -1,20 +1,29 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  CheckCircle2, Circle, AlertCircle, AlertTriangle, History,
-  Loader2, Lock, ClipboardCheck, ChevronRight, ChevronDown, CalendarClock,
+  CheckCircle2, XCircle, Circle, AlertCircle, AlertTriangle, History,
+  Loader2, Lock, ClipboardCheck, ChevronRight, ChevronDown, CalendarClock, Clock,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
+import { useToast } from '@/hooks/useToast';
 import { isDue, getDueDatesInRange, isOutOfRange, todayStr, addDays } from '@/lib/schedule';
 import EntryModal from '@/components/EntryModal';
 
-const DEPT_NAMES = { serology: 'Serology', molecularBio: 'Molecular Biology', microbiology: 'Microbiology' };
-const DEPT_ACCENT = { serology: 'text-red-400', molecularBio: 'text-sky-400', microbiology: 'text-yellow-400' };
+const DEPT_NAMES  = { serology: 'Serology', molecularBio: 'Molecular Biology', microbiology: 'Microbiology' };
+const DEPT_SYMBOL = { serology: '⊕',        molecularBio: '⌬',                microbiology: '⊙' };
 const LOOKBACK_DAYS = 30;
 
-function StatusChip({ status, oor }) {
+function StatusChip({ status, oor, requiresReview, reviewResult }) {
   if ((status === 'done' || status === 'late') && oor)
     return <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-orange-500/10 text-orange-400 border border-orange-500/20"><AlertTriangle className="w-3 h-3" /> Out of range</span>;
+  // Review-required states
+  if (requiresReview && (status === 'done' || status === 'late')) {
+    if (reviewResult === 'pass')
+      return <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"><CheckCircle2 className="w-3 h-3" /> Pass</span>;
+    if (reviewResult === 'fail')
+      return <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-red-500/10 text-red-400 border border-red-500/20"><XCircle className="w-3 h-3" /> Fail</span>;
+    return <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20"><Clock className="w-3 h-3" /> Awaiting review</span>;
+  }
   if (status === 'done')
     return <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"><CheckCircle2 className="w-3 h-3" /> Done</span>;
   if (status === 'late')
@@ -43,7 +52,12 @@ function TaskRow({ param, entry, onClick, locked }) {
         )}
       </div>
       {locked && <Lock className="w-3 h-3 text-muted-foreground flex-shrink-0" />}
-      <StatusChip status={entry?.status} oor={oor} />
+      <StatusChip
+        status={entry?.status}
+        oor={oor}
+        requiresReview={param.requires_review === 1}
+        reviewResult={entry?.result ?? null}
+      />
       <ChevronRight className="w-3.5 h-3.5 text-muted-foreground/40 group-hover:text-muted-foreground transition-colors flex-shrink-0" />
     </button>
   );
@@ -89,6 +103,7 @@ function OverdueGroup({ param, dates, onPick }) {
 
 export default function TodayPage({ dept }) {
   const { token, user } = useAuth();
+  const toast = useToast();
   const today = todayStr();
 
   const [params,   setParams]   = useState([]);
@@ -98,6 +113,7 @@ export default function TodayPage({ dept }) {
   const [loading,  setLoading]  = useState(true);
   const [entry,    setEntry]    = useState(null); // { param, date, locked }
   const [submitting, setSubmitting] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -142,6 +158,11 @@ export default function TodayPage({ dept }) {
   }).length;
   const pendingCount = todayTasks.filter(p => !entryMap[`${p.id}__${today}`]).length;
 
+  // Bulk target: pending, simple checkbox checks due today (numeric/text need a value).
+  const bulkTargets = todayTasks.filter(p =>
+    p.entry_type === 'checkbox' && !entryMap[`${p.id}__${today}`]
+  );
+
   // Overdue carry-forward: due on a past day in the window, never recorded
   const overdue = useMemo(() => {
     const items = [];
@@ -171,6 +192,27 @@ export default function TodayPage({ dept }) {
     setEntry({ param, date, locked });
   }
 
+  async function handleMarkAllDone() {
+    if (bulkTargets.length === 0) return;
+    if (!window.confirm(`Mark ${bulkTargets.length} routine check${bulkTargets.length !== 1 ? 's' : ''} as done for today?`)) return;
+    setBulkBusy(true);
+    try {
+      let ok = 0, failMsg = '';
+      for (const p of bulkTargets) {
+        const res = await window.cqpm.entries.save(token, {
+          parameterId: p.id, slotDate: today, status: 'done',
+          value: null, notes: null, department: dept,
+        });
+        if (res?.error) failMsg = res.error; else ok++;
+      }
+      if (ok > 0) toast(`Marked ${ok} check${ok !== 1 ? 's' : ''} done.`, 'success');
+      if (failMsg) toast(failMsg, 'error');
+      await load();
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
   async function handleSubmitShift() {
     if (pendingCount > 0 &&
         !window.confirm(`${pendingCount} check(s) are still pending today. Submit anyway? They will be recorded as not done.`))
@@ -178,7 +220,8 @@ export default function TodayPage({ dept }) {
     setSubmitting(true);
     try {
       const res = await window.cqpm.signoff.submit(token, dept, today);
-      if (res?.error) { alert(res.error); return; }
+      if (res?.error) { toast(res.error, 'error'); return; }
+      toast('End-of-shift submitted for review.', 'success');
       await load();
     } finally {
       setSubmitting(false);
@@ -198,7 +241,9 @@ export default function TodayPage({ dept }) {
           <h1 className="text-base font-semibold flex items-center gap-2">
             <ClipboardCheck className="w-4 h-4 text-primary" />
             Today’s Checks
-            <span className={cn('text-xs font-medium', DEPT_ACCENT[dept])}>· {DEPT_NAMES[dept]}</span>
+            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+              <span className="font-mono">{DEPT_SYMBOL[dept]}</span> {DEPT_NAMES[dept]}
+            </span>
           </h1>
           <p className="text-xs text-muted-foreground mt-0.5">{displayToday}</p>
         </div>
@@ -265,6 +310,15 @@ export default function TodayPage({ dept }) {
                 <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground">
                   Due today ({todayTasks.length})
                 </h2>
+                {!todayLocked && bulkTargets.length > 0 && (
+                  <button onClick={handleMarkAllDone} disabled={bulkBusy}
+                    title="Marks all pending checkbox checks done. Numeric/text checks still need values."
+                    className="ml-auto flex items-center gap-1.5 h-7 px-2.5 text-[11px] rounded-md border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 transition-colors disabled:opacity-50">
+                    {bulkBusy
+                      ? <><Loader2 className="w-3 h-3 animate-spin" /> Marking…</>
+                      : <><CheckCircle2 className="w-3.5 h-3.5" /> Mark {bulkTargets.length} routine done</>}
+                  </button>
+                )}
               </div>
 
               {todayTasks.length === 0 ? (

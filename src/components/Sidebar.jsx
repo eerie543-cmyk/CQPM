@@ -1,14 +1,15 @@
 import { useState } from 'react';
-import { FlaskConical, LayoutGrid, CalendarDays, Users, LogOut, ChevronRight, ClipboardCheck, Inbox } from 'lucide-react';
+import { FlaskConical, LayoutGrid, CalendarDays, Users, LogOut, ChevronRight, ClipboardCheck, Inbox, Sun, Moon, Settings } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { useRemoteConfigContext } from '@/hooks/useRemoteConfigContext';
+import { useTheme } from '@/hooks/useTheme';
 import UsersPanel from './UsersPanel';
 
 const DEPTS = [
-  { id: 'serology',     label: 'Serology',         color: 'bg-red-500'    },
-  { id: 'molecularBio', label: 'Molecular Biology', color: 'bg-sky-500'    },
-  { id: 'microbiology', label: 'Microbiology',      color: 'bg-yellow-500' },
+  { id: 'serology',     label: 'Serology',         symbol: '⊕' },
+  { id: 'molecularBio', label: 'Molecular Biology', symbol: '⌬' },
+  { id: 'microbiology', label: 'Microbiology',      symbol: '⊙' },
 ];
 
 const NAV = [
@@ -28,9 +29,10 @@ function relTime(ts) {
   return `${Math.round(m / 60)}h ago`;
 }
 
-export default function Sidebar({ page, onPage, activeDept, onDept, isAdmin, matrixEnabled = true, user, visibleDepts }) {
+export default function Sidebar({ page, onPage, activeDept, onDept, isAdmin, matrixEnabled = true, user, visibleDepts, pendingParamRequests = 0 }) {
   const { logout } = useAuth();
   const { appVersion, status, lastSync, configured } = useRemoteConfigContext();
+  const { dark, toggle: toggleTheme } = useTheme();
   const [usersOpen, setUsersOpen] = useState(false);
 
   const depts = visibleDepts ? DEPTS.filter(d => visibleDepts.includes(d.id)) : DEPTS;
@@ -83,11 +85,9 @@ export default function Sidebar({ page, onPage, activeDept, onDept, isAdmin, mat
                       : 'text-muted-foreground cursor-default opacity-50'
                 )}
               >
-                <span className={cn(
-                  'w-2 h-2 rounded-full flex-shrink-0 transition-transform duration-150',
-                  d.color,
-                  canSwitch && !active && 'group-hover/dept:scale-125'
-                )} />
+                <span className="font-mono text-[12px] leading-none flex-shrink-0 text-muted-foreground">
+                  {d.symbol}
+                </span>
                 <span className="truncate">{d.label}</span>
                 {active && (
                   <ChevronRight className="w-3 h-3 ml-auto text-primary transition-transform duration-150 group-hover/dept:translate-x-0.5" />
@@ -108,6 +108,7 @@ export default function Sidebar({ page, onPage, activeDept, onDept, isAdmin, mat
             .map(n => {
             const Icon   = n.icon;
             const active = page === n.id;
+            const badge  = n.id === 'approvals' && pendingParamRequests > 0;
             return (
               <button
                 key={n.id}
@@ -125,40 +126,60 @@ export default function Sidebar({ page, onPage, activeDept, onDept, isAdmin, mat
                     ? 'text-primary'
                     : 'group-hover/nav:text-primary group-hover/nav:scale-110'
                 )} />
-                {n.label}
+                <span className="flex-1">{n.label}</span>
+                {badge && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0 animate-pulse" title={`${pendingParamRequests} pending parameter request${pendingParamRequests !== 1 ? 's' : ''}`} />
+                )}
               </button>
             );
           })}
 
-          {/* Users panel button — admin only */}
+          {/* Tools section — Users (admin only) + Settings (everyone) */}
+          <div className="my-2 border-t border-border/40" />
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1 px-1">
+            Tools
+          </p>
+
           {isAdmin && (
-            <>
-              <div className="my-2 border-t border-border/40" />
-              <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-1 px-1">
-                Admin
-              </p>
-              <button
-                onClick={() => setUsersOpen(v => !v)}
-                className={cn(
-                  'group/users w-full flex items-center gap-2.5 px-2 py-1.5 rounded-md text-left text-xs transition-all duration-150',
-                  usersOpen
-                    ? 'bg-primary/10 text-foreground font-medium'
-                    : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-                )}
-              >
-                <Users className={cn(
-                  'w-3.5 h-3.5 flex-shrink-0 transition-all duration-150',
-                  usersOpen
-                    ? 'text-primary'
-                    : 'group-hover/users:text-primary group-hover/users:scale-110'
-                )} />
-                <span>Users</span>
-                {usersOpen && (
-                  <span className="ml-auto w-1.5 h-1.5 rounded-full bg-primary transition-transform duration-150 group-hover/users:scale-125" />
-                )}
-              </button>
-            </>
+            <button
+              onClick={() => setUsersOpen(v => !v)}
+              className={cn(
+                'group/users w-full flex items-center gap-2.5 px-2 py-1.5 rounded-md text-left text-xs transition-all duration-150',
+                usersOpen
+                  ? 'bg-muted text-foreground font-medium'
+                  : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+              )}
+            >
+              <Users className={cn(
+                'w-3.5 h-3.5 flex-shrink-0 transition-all duration-150',
+                usersOpen
+                  ? 'text-foreground'
+                  : 'group-hover/users:text-primary group-hover/users:scale-110'
+              )} />
+              <span>Users</span>
+              {usersOpen && (
+                <span className="ml-auto w-1.5 h-1.5 rounded-full bg-muted-foreground/50" />
+              )}
+            </button>
           )}
+
+          <button
+            onClick={() => onPage('settings')}
+            className={cn(
+              'group/settings w-full flex items-center gap-2.5 px-2 py-1.5 rounded-md text-left text-xs transition-all duration-150',
+              page === 'settings'
+                ? 'bg-primary/10 text-foreground font-medium'
+                : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+            )}
+          >
+            <Settings className={cn(
+              'w-3.5 h-3.5 flex-shrink-0 transition-all duration-150',
+              page === 'settings'
+                ? 'text-primary'
+                : 'group-hover/settings:text-primary group-hover/settings:scale-110'
+            )} />
+            <span>Settings</span>
+          </button>
         </nav>
 
         {/* User info + logout */}
@@ -182,16 +203,25 @@ export default function Sidebar({ page, onPage, activeDept, onDept, isAdmin, mat
             Sign out
           </button>
 
-          {/* Version label doubles as a whisper-subtle connection indicator. */}
-          <p
-            title={statusTitle}
-            className={cn(
-              'mt-2 px-1 text-[10px] text-muted-foreground/70 cursor-default transition-opacity duration-300',
-              offline && 'opacity-50',
-            )}
-          >
-            v{appVersion}
-          </p>
+          {/* Version label (whisper-subtle connection indicator) + theme toggle. */}
+          <div className="mt-2 flex items-center justify-between px-1">
+            <p
+              title={statusTitle}
+              className={cn(
+                'text-[10px] text-muted-foreground/70 cursor-default transition-opacity duration-300',
+                offline && 'opacity-50',
+              )}
+            >
+              v{appVersion}
+            </p>
+            <button
+              onClick={toggleTheme}
+              title={dark ? 'Switch to light mode' : 'Switch to dark mode'}
+              className="p-1 rounded-md text-muted-foreground/70 hover:text-foreground hover:bg-muted transition-colors"
+            >
+              {dark ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
+            </button>
+          </div>
         </div>
       </aside>
 

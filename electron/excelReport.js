@@ -8,6 +8,7 @@ const DEPT_LABEL = {
 const STATUS_LABEL = {
   done: 'Done', late: 'Late', missed: 'Missed', notdone: 'Not done', pending: 'Pending',
 };
+const REVIEW_LABEL = { pass: 'Pass', fail: 'Fail', pending: 'Pending', null: '—' };
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 function fmtDate(d) {
@@ -48,6 +49,7 @@ function buildComplianceWorkbook(ExcelJS, payload) {
     ST_RED:      'FFFEE2E2',
     ST_GREY:     'FFF1F5F9',
     ST_ORANGE:   'FFFFEDD5',
+    ST_REVIEW:   'FFFFF8E1',  // amber-tint for "pending review"
     SUMMARY_BG:  'FFD4EDDA',
     SUMMARY_TXT: 'FF2D5A3D',
     FOOTER_BG:   'FFF5F5F5',
@@ -68,23 +70,25 @@ function buildComplianceWorkbook(ExcelJS, payload) {
 
   // ── Columns ─────────────────────────────────────────────────────────────────
   const COLS = [
-    { header: '#',           key: 'idx',        width: 5  },
-    { header: 'Date',        key: 'date',       width: 15 },
-    { header: 'Department',  key: 'department', width: 20 },
-    { header: 'Parameter',   key: 'parameter',  width: 30 },
-    { header: 'Critical',    key: 'critical',   width: 9  },
-    { header: 'Schedule',    key: 'schedule',   width: 16 },
-    { header: 'Type',        key: 'type',       width: 11 },
-    { header: 'Status',      key: 'status',     width: 12 },
-    { header: 'Value',       key: 'value',      width: 12 },
-    { header: 'Allowed',     key: 'allowed',    width: 14 },
-    { header: 'In Range',    key: 'inRange',    width: 13 },
-    { header: 'Recorded By', key: 'recordedBy', width: 18 },
-    { header: 'Recorded At', key: 'recordedAt', width: 18 },
-    { header: 'Reason / Notes', key: 'reason',  width: 40 },
+    { header: '#',              key: 'idx',        width: 5  },
+    { header: 'Date',           key: 'date',       width: 15 },
+    { header: 'Department',     key: 'department', width: 20 },
+    { header: 'Parameter',      key: 'parameter',  width: 30 },
+    { header: 'Critical',       key: 'critical',   width: 9  },
+    { header: 'Schedule',       key: 'schedule',   width: 16 },
+    { header: 'Type',           key: 'type',       width: 11 },
+    { header: 'Status',         key: 'status',     width: 12 },
+    { header: 'Value',          key: 'value',      width: 12 },
+    { header: 'Allowed',        key: 'allowed',    width: 14 },
+    { header: 'In Range',       key: 'inRange',    width: 13 },
+    { header: 'Review Result',  key: 'reviewResult', width: 14 },
+    { header: 'Reviewed By',    key: 'reviewedBy', width: 18 },
+    { header: 'Recorded By',    key: 'recordedBy', width: 18 },
+    { header: 'Recorded At',    key: 'recordedAt', width: 18 },
+    { header: 'Reason / Notes', key: 'reason',     width: 40 },
   ];
   const NCOLS = COLS.length;
-  const lastCol = String.fromCharCode(64 + NCOLS);
+  const lastCol = NCOLS <= 26 ? String.fromCharCode(64 + NCOLS) : 'A' + String.fromCharCode(64 + NCOLS - 26);
 
   // ═══════════════════════════════════════════════════════════════════════════
   // SHEET 1 — Compliance Log
@@ -119,6 +123,9 @@ function buildComplianceWorkbook(ExcelJS, payload) {
     const inRange = r.entryType === 'Numeric' && (r.minValue != null || r.maxValue != null) && r.value !== ''
       ? (r.oor ? 'OUT OF RANGE' : 'In range')
       : '';
+    const reviewLabel = r.requiresReview
+      ? (REVIEW_LABEL[r.reviewStatus] || (r.reviewStatus ? r.reviewStatus : '—'))
+      : '—';
     const dataRow = ws.addRow([
       idx + 1,
       fmtDate(r.date),
@@ -131,6 +138,8 @@ function buildComplianceWorkbook(ExcelJS, payload) {
       r.value !== '' ? `${r.value}${r.unit ? ' ' + r.unit : ''}` : '',
       rangeText(r),
       inRange,
+      reviewLabel,
+      r.reviewedBy || '',
       r.recordedBy || '',
       fmtDateTime(r.recordedAt),
       r.reason || '',
@@ -148,11 +157,18 @@ function buildComplianceWorkbook(ExcelJS, payload) {
       cell.border = allBorders(C.BORDER);
       cell.alignment = {
         vertical: 'middle',
-        horizontal: colNum === 4 || colNum === 14 ? 'left' : 'center',
-        wrapText: colNum === 14,
+        horizontal: colNum === 4 || colNum === 16 ? 'left' : 'center',
+        wrapText: colNum === 16,
       };
-      if      (colNum === 8)  cell.fill = fill(statusFill(r.statusRaw)); // Status
-      else if (colNum === 11 && r.oor) cell.fill = fill(C.ST_ORANGE);   // In Range = OUT
+      if      (colNum === 8)  cell.fill = fill(statusFill(r.statusRaw));     // Status
+      else if (colNum === 11 && r.oor) cell.fill = fill(C.ST_ORANGE);        // In Range = OUT
+      else if (colNum === 12 && r.requiresReview) {
+        const rf = r.reviewStatus === 'pass'    ? C.ST_GREEN
+                 : r.reviewStatus === 'fail'    ? C.ST_RED
+                 : r.reviewStatus === 'pending' ? C.ST_REVIEW
+                 : C.ST_GREY;
+        cell.fill = fill(rf);
+      }
       else    cell.fill = rowFill;
     });
     dataRow.height = 18;
@@ -242,6 +258,12 @@ function buildComplianceWorkbook(ExcelJS, payload) {
   addRow('Pending', agg.pending);
   addRow('Weighted Compliance', agg.compliance, true);
   addRow('Out-of-range Readings', agg.flagged);
+  if (agg.reviewDue > 0) {
+    addRow('Requires Review (checks)', agg.reviewDue);
+    addRow('  ↳ Passed', agg.reviewPass);
+    addRow('  ↳ Failed', agg.reviewFail);
+    addRow('  ↳ Awaiting review', agg.reviewPending);
+  }
   addBlank();
 
   addTitle('Critical Parameters');
@@ -270,6 +292,7 @@ function buildComplianceWorkbook(ExcelJS, payload) {
 
 function aggregate(rows) {
   let totalW = 0, earnedW = 0, critDue = 0, critMet = 0, flagged = 0;
+  let reviewDue = 0, reviewPass = 0, reviewFail = 0, reviewPending = 0;
   const byStatus = {};
   const byDept = {};
   rows.forEach(r => {
@@ -282,13 +305,19 @@ function aggregate(rows) {
     byDept[r.department].earnedW += r.earned;
     if (r.critical) { critDue++; if (r.earned > 0) critMet++; }
     if (r.oor) flagged++;
+    if (r.requiresReview) {
+      reviewDue++;
+      if      (r.reviewStatus === 'pass')    reviewPass++;
+      else if (r.reviewStatus === 'fail')    reviewFail++;
+      else if (r.reviewStatus === 'pending') reviewPending++;
+    }
   });
   const done = byStatus.done || 0;
   const late = byStatus.late || 0;
   const pending = byStatus.pending || 0;
   const missedTotal = (byStatus.missed || 0) + (byStatus.notdone || 0);
   const compliance = totalW ? Math.round((earnedW / totalW) * 100) + '%' : '—';
-  return { totalW, earnedW, done, late, pending, missedTotal, compliance, critDue, critMet, flagged, byStatus, byDept };
+  return { totalW, earnedW, done, late, pending, missedTotal, compliance, critDue, critMet, flagged, reviewDue, reviewPass, reviewFail, reviewPending, byStatus, byDept };
 }
 
 module.exports = { buildComplianceWorkbook };

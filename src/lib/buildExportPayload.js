@@ -38,29 +38,45 @@ export function buildDeptRows(deptId, params, entries, from, to, today) {
 
       // Weighted compliance (same rule as the matrix): critical = 2×,
       // done = full, late = 0.7×, out-of-range earns nothing.
+      // requires_review params: only result='pass' earns credit.
       const weight = p.critical === 1 ? 2 : 1;
       let earned = 0;
       if (!oor) {
-        if      (statusRaw === 'done') earned = weight;
-        else if (statusRaw === 'late') earned = weight * 0.7;
+        if (p.requires_review === 1) {
+          if (e?.result === 'pass') {
+            if      (statusRaw === 'done') earned = weight;
+            else if (statusRaw === 'late') earned = weight * 0.7;
+          }
+        } else {
+          if      (statusRaw === 'done') earned = weight;
+          else if (statusRaw === 'late') earned = weight * 0.7;
+        }
       }
+
+      const reviewStatus = p.requires_review === 1
+        ? (e?.result ?? (e ? 'pending' : null))
+        : null;
 
       rows.push({
         date,
-        department: deptId,
-        parameter:  p.name,
-        critical:   p.critical === 1 ? 1 : 0,
-        schedule:   scheduleLabel(p),
-        entryType:  TYPE_LABEL[p.entry_type] || p.entry_type || '',
+        department:    deptId,
+        parameter:     p.name,
+        critical:      p.critical === 1 ? 1 : 0,
+        requiresReview: p.requires_review === 1 ? 1 : 0,
+        schedule:      scheduleLabel(p),
+        entryType:     TYPE_LABEL[p.entry_type] || p.entry_type || '',
         statusRaw,
-        value:      e?.value ?? '',
-        unit:       p.unit || '',
-        minValue:   p.min_value ?? null,
-        maxValue:   p.max_value ?? null,
+        reviewStatus,
+        reviewedBy:    e?.reviewed_by_name || '',
+        reviewNote:    e?.review_note || '',
+        value:         e?.value ?? '',
+        unit:          p.unit || '',
+        minValue:      p.min_value ?? null,
+        maxValue:      p.max_value ?? null,
         oor,
-        recordedBy: e?.done_by_name || '',
-        recordedAt: e?.created_at   || '',
-        reason:     e?.notes || '',
+        recordedBy:    e?.done_by_name || '',
+        recordedAt:    e?.created_at   || '',
+        reason:        e?.notes || '',
         weight,
         earned,
       });

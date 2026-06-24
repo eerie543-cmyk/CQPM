@@ -150,9 +150,10 @@ function Field({ label, children }) {
 }
 
 // ── Main modal ────────────────────────────────────────────────────────────────
-export default function ParamBuilderModal({ dept, existing, onSave, onClose }) {
+export default function ParamBuilderModal({ dept, existing, onSave, onClose, mode = 'admin' }) {
   const { token } = useAuth();
-  const isEdit = !!existing;
+  const isEdit   = !!existing;
+  const isStaff  = mode === 'staff';
 
   const [form, setForm] = useState({
     name:          existing?.name          ?? '',
@@ -172,7 +173,8 @@ export default function ParamBuilderModal({ dept, existing, onSave, onClose }) {
     unit:          existing?.unit          ?? '',
     minValue:      existing?.min_value     ?? '',
     maxValue:      existing?.max_value     ?? '',
-    critical:      existing?.critical      === 1,
+    critical:        existing?.critical        === 1,
+    requiresReview:  existing?.requires_review === 1,
   });
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState('');
@@ -215,39 +217,60 @@ export default function ParamBuilderModal({ dept, existing, onSave, onClose }) {
       const maxVal = isNumeric && form.maxValue !== '' ? Number(form.maxValue) : null;
 
       const commonFields = {
-        name:          form.name.trim(),
-        description:   form.description.trim() || null,
-        schedule_type: form.scheduleType,
-        frequency:     isFreq ? form.frequency : null,
-        days_of_week:  needsDays ? form.daysOfWeek.join(',') : null,
-        day_of_month:  (isFreq && form.frequency === 'monthly') ? Number(form.dayOfMonth) : null,
+        name:           form.name.trim(),
+        description:    form.description.trim() || null,
+        schedule_type:  form.scheduleType,
+        frequency:      isFreq ? form.frequency : null,
+        days_of_week:   needsDays ? form.daysOfWeek.join(',') : null,
+        day_of_month:   (isFreq && form.frequency === 'monthly') ? Number(form.dayOfMonth) : null,
         specific_dates: !isFreq ? form.specificDates.join(',') : null,
-        entry_type:    form.entryType,
-        unit:          isNumeric ? form.unit.trim() || null : null,
-        min_value:     minVal,
-        max_value:     maxVal,
-        critical:      form.critical ? 1 : 0,
+        entry_type:     form.entryType,
+        unit:           isNumeric ? form.unit.trim() || null : null,
+        min_value:      minVal,
+        max_value:      maxVal,
+        critical:       form.critical ? 1 : 0,
+        requires_review: form.requiresReview ? 1 : 0,
       };
 
       let res;
-      if (isEdit) {
+      if (isStaff) {
+        // Staff: submit as a request pending admin approval
+        res = await window.cqpm.paramreq.submit(token, {
+          department:     form.department,
+          name:           form.name.trim(),
+          description:    form.description.trim() || null,
+          scheduleType:   form.scheduleType,
+          frequency:      isFreq ? form.frequency : null,
+          daysOfWeek:     needsDays ? form.daysOfWeek.join(',') : null,
+          dayOfMonth:     (isFreq && form.frequency === 'monthly') ? Number(form.dayOfMonth) : null,
+          specificDates:  !isFreq ? form.specificDates.join(',') : null,
+          entryType:      form.entryType,
+          unit:           isNumeric ? form.unit.trim() || null : null,
+          minValue:       minVal,
+          maxValue:       maxVal,
+          critical:       form.critical ? 1 : 0,
+          requiresReview: form.requiresReview ? 1 : 0,
+          sortOrder:      0,
+        });
+      } else if (isEdit) {
         res = await window.cqpm.params.update(token, existing.id, commonFields);
       } else {
         res = await window.cqpm.params.create(token, {
           ...commonFields,
           // map snake_case → camelCase for create handler
-          scheduleType:  form.scheduleType,
-          daysOfWeek:    needsDays ? form.daysOfWeek.join(',') : null,
-          dayOfMonth:    (isFreq && form.frequency === 'monthly') ? Number(form.dayOfMonth) : null,
-          specificDates: !isFreq ? form.specificDates.join(',') : null,
-          entryType:     form.entryType,
-          minValue:      minVal,
-          maxValue:      maxVal,
-          department:    form.department,
+          scheduleType:   form.scheduleType,
+          daysOfWeek:     needsDays ? form.daysOfWeek.join(',') : null,
+          dayOfMonth:     (isFreq && form.frequency === 'monthly') ? Number(form.dayOfMonth) : null,
+          specificDates:  !isFreq ? form.specificDates.join(',') : null,
+          entryType:      form.entryType,
+          minValue:       minVal,
+          maxValue:       maxVal,
+          requiresReview: form.requiresReview ? 1 : 0,
+          department:     form.department,
         });
       }
       if (res?.error) return setError(res.error);
-      onSave();
+      onSave(isStaff ? 'requested' : 'saved');
     } finally {
       setLoading(false);
     }
@@ -264,9 +287,13 @@ export default function ParamBuilderModal({ dept, existing, onSave, onClose }) {
         {/* Header */}
         <div className="flex items-center justify-between p-5 border-b flex-shrink-0">
           <div>
-            <h2 className="text-sm font-semibold">{isEdit ? 'Edit Parameter' : 'New Parameter'}</h2>
+            <h2 className="text-sm font-semibold">
+              {isStaff ? 'Request New Parameter' : isEdit ? 'Edit Parameter' : 'New Parameter'}
+            </h2>
             <p className="text-xs text-muted-foreground mt-0.5">
-              {DEPT_NAMES[isEdit ? existing.department : form.department]}
+              {isStaff
+                ? 'Your request will be sent to an admin for approval'
+                : DEPT_NAMES[isEdit ? existing.department : form.department]}
             </p>
           </div>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
@@ -467,6 +494,26 @@ export default function ParamBuilderModal({ dept, existing, onSave, onClose }) {
             </button>
           </div>
 
+          {/* Requires review toggle */}
+          <div className="flex items-center justify-between p-3 rounded-lg border bg-muted/20">
+            <div>
+              <p className="text-xs font-medium">Requires Result Review</p>
+              <p className="text-[10px] text-muted-foreground mt-0.5">
+                Admin must judge Pass/Fail before this check earns compliance credit
+              </p>
+            </div>
+            <button type="button" onClick={() => set('requiresReview', !form.requiresReview)}
+              className={cn(
+                'w-11 h-6 rounded-full border-2 transition-all relative flex-shrink-0',
+                form.requiresReview ? 'bg-amber-500 border-amber-500' : 'border-border bg-muted'
+              )}>
+              <span className={cn(
+                'absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all',
+                form.requiresReview ? 'left-[calc(100%-18px)]' : 'left-0.5'
+              )} />
+            </button>
+          </div>
+
           {error && <p className="text-xs text-destructive">{error}</p>}
         </div>
 
@@ -482,8 +529,10 @@ export default function ParamBuilderModal({ dept, existing, onSave, onClose }) {
               'flex items-center gap-1.5 hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed'
             )}>
             {loading
-              ? <><Loader2 className="w-3 h-3 animate-spin" /> Saving…</>
-              : isEdit ? 'Update' : 'Create Parameter'}
+              ? <><Loader2 className="w-3 h-3 animate-spin" /> {isStaff ? 'Submitting…' : 'Saving…'}</>
+              : isStaff ? 'Submit Request'
+              : isEdit  ? 'Update'
+              : 'Create Parameter'}
           </button>
         </div>
       </div>

@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 export default function SessionWarning() {
   const { sessionWarn, dismissWarn, logout, expiresAt } = useAuth();
   if (!sessionWarn) return null;
+  if (localStorage.getItem('cqpm:notify_session_warn') === 'false') return null;
 
   const minsLeft = expiresAt
     ? Math.max(0, Math.ceil((expiresAt - Date.now()) / 60000))

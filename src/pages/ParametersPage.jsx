@@ -1,16 +1,17 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   Plus, Pencil, Trash2, FlaskConical,
-  RefreshCw, CalendarDays, AlertTriangle, Hash, Type, CheckSquare,
+  RefreshCw, CalendarDays, AlertTriangle, Hash, Type, CheckSquare, Search, Send,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
+import { useToast } from '@/hooks/useToast';
 import ParamBuilderModal from '@/components/ParamBuilderModal';
 
 const DEPTS = [
-  { id: 'serology',     label: 'Serology',         color: 'bg-red-500',    accent: 'text-red-400',    border: 'border-red-500/25',    headerBg: 'bg-red-500/8'    },
-  { id: 'molecularBio', label: 'Molecular Biology', color: 'bg-sky-500',    accent: 'text-sky-400',    border: 'border-sky-500/25',    headerBg: 'bg-sky-500/8'    },
-  { id: 'microbiology', label: 'Microbiology',      color: 'bg-yellow-500', accent: 'text-yellow-400', border: 'border-yellow-500/25', headerBg: 'bg-yellow-500/8' },
+  { id: 'serology',     label: 'Serology',         symbol: '⊕' },
+  { id: 'molecularBio', label: 'Molecular Biology', symbol: '⌬' },
+  { id: 'microbiology', label: 'Microbiology',      symbol: '⊙' },
 ];
 
 const FREQ_LABELS = {
@@ -216,9 +217,13 @@ function ParamRow({ param, isAdmin, onEdit, onDelete }) {
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function ParametersPage({ dept }) {
   const { token, isAdmin } = useAuth();
+  const toast = useToast();
   const [params,  setParams]  = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal,   setModal]   = useState(null); // null | { dept } | param-object
+  const [staffModal, setStaffModal] = useState(false);
+  const [query,   setQuery]   = useState('');
+  const [critOnly, setCritOnly] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -249,6 +254,12 @@ export default function ParametersPage({ dept }) {
   const freqCount     = deptParams.filter(p => p.schedule_type !== 'specific').length;
   const specificCount = deptParams.filter(p => p.schedule_type === 'specific').length;
 
+  const q = query.trim().toLowerCase();
+  const shown = deptParams.filter(p =>
+    (!critOnly || p.critical) &&
+    (!q || p.name.toLowerCase().includes(q) || (p.description || '').toLowerCase().includes(q))
+  );
+
   return (
     <div className="flex flex-col h-full">
 
@@ -256,8 +267,8 @@ export default function ParametersPage({ dept }) {
       <div className="flex items-center justify-between px-6 py-4 border-b bg-card/50 backdrop-blur flex-shrink-0 gap-4">
         <div>
           <h1 className="text-base font-semibold flex items-center gap-2">
-            <span className={cn('w-2.5 h-2.5 rounded-full', deptMeta.color)} />
-            <span className={deptMeta.accent}>{deptMeta.label}</span>
+            <span className="font-mono text-[13px] leading-none text-muted-foreground">{deptMeta.symbol}</span>
+            {deptMeta.label}
             <span className="text-muted-foreground font-normal">· Parameters</span>
           </h1>
           {!loading && (
@@ -281,11 +292,17 @@ export default function ParametersPage({ dept }) {
             </div>
           )}
         </div>
-        {isAdmin && (
+        {isAdmin ? (
           <button onClick={() => setModal({ dept })}
-            className="flex items-center gap-1.5 h-8 px-3 text-xs rounded-md bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors flex-shrink-0">
+            className="flex items-center gap-1.5 h-8 px-3 text-xs rounded-md border border-border/40 bg-background/30 text-muted-foreground/70 backdrop-blur hover:border-primary/40 hover:bg-primary/5 hover:text-primary transition-all flex-shrink-0">
             <Plus className="w-3.5 h-3.5" />
             Add Parameter
+          </button>
+        ) : (
+          <button onClick={() => setStaffModal(true)}
+            className="flex items-center gap-1.5 h-8 px-3 text-xs rounded-md border border-border/40 bg-background/30 text-muted-foreground/70 backdrop-blur hover:border-amber-400/40 hover:bg-amber-500/5 hover:text-amber-400 transition-all flex-shrink-0">
+            <Send className="w-3.5 h-3.5" />
+            Request Parameter
           </button>
         )}
       </div>
@@ -309,20 +326,30 @@ export default function ParametersPage({ dept }) {
               </div>
             ) : (
               <>
-                {deptParams.map(p => (
-                  <ParamRow key={p.id} param={p} isAdmin={isAdmin}
-                    onEdit={() => setModal(p)} onDelete={handleDelete} />
-                ))}
-                {isAdmin && (
-                  <button onClick={() => setModal({ dept })}
+                {/* Search + filter */}
+                <div className="flex items-center gap-2 mb-1">
+                  <div className="relative flex-1">
+                    <Search className="w-3.5 h-3.5 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2" />
+                    <input type="text" value={query} onChange={e => setQuery(e.target.value)}
+                      placeholder="Search parameters…"
+                      className="h-8 w-full rounded-md border bg-background pl-8 pr-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring" />
+                  </div>
+                  <button onClick={() => setCritOnly(v => !v)}
                     className={cn(
-                      'rounded-lg border-2 border-dashed border-border/40 py-2.5 mt-1',
-                      'flex items-center justify-center gap-2 text-muted-foreground',
-                      'hover:border-primary/40 hover:bg-primary/5 hover:text-primary transition-all group'
+                      'h-8 px-2.5 text-[11px] rounded-md border font-medium flex items-center gap-1 transition-colors flex-shrink-0',
+                      critOnly ? 'bg-red-500/10 border-red-500/30 text-red-400' : 'text-muted-foreground hover:bg-muted'
                     )}>
-                    <Plus className="w-4 h-4 transition-transform group-hover:scale-110" />
-                    <span className="text-xs font-medium">New Parameter</span>
+                    <AlertTriangle className="w-3 h-3" /> Critical only
                   </button>
+                </div>
+
+                {shown.length === 0 ? (
+                  <p className="text-center text-xs text-muted-foreground py-10">No parameters match your filter.</p>
+                ) : (
+                  shown.map(p => (
+                    <ParamRow key={p.id} param={p} isAdmin={isAdmin}
+                      onEdit={() => setModal(p)} onDelete={handleDelete} />
+                  ))
                 )}
               </>
             )}
@@ -337,6 +364,19 @@ export default function ParametersPage({ dept }) {
           existing={modal.dept ? null : modal}
           onSave={() => { setModal(null); load(); }}
           onClose={() => setModal(null)}
+        />
+      )}
+
+      {staffModal && (
+        <ParamBuilderModal
+          dept={dept}
+          mode="staff"
+          onSave={(outcome) => {
+            setStaffModal(false);
+            if (outcome === 'requested')
+              toast('Request submitted — awaiting admin approval.', 'success');
+          }}
+          onClose={() => setStaffModal(false)}
         />
       )}
     </div>

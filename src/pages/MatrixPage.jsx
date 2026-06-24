@@ -1,24 +1,20 @@
 import { useState, useMemo, useCallback } from 'react';
-import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut, CheckCircle2, Circle, AlertCircle, AlertTriangle, Minus, Plus, Lock, RotateCcw, FileSpreadsheet } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut, CheckCircle2, XCircle, Circle, AlertCircle, AlertTriangle, Minus, Plus, Lock, RotateCcw, FileSpreadsheet, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useMatrix } from '@/hooks/useMatrix';
 import { useAuth } from '@/hooks/useAuth';
 import { useRemoteConfigContext } from '@/hooks/useRemoteConfigContext';
 import { isDue, isOutOfRange, todayStr, addDays } from '@/lib/schedule';
 import EntryModal from '@/components/EntryModal';
+import ReviewModal from '@/components/ReviewModal';
 import ParamBuilderModal from '@/components/ParamBuilderModal';
 import ExportModal from '@/components/ExportModal';
 
 const SCALES = ['day', 'week', 'month', 'quarter', 'year'];
 const SCALE_LABELS = { day: 'Daily', week: 'Weekly', month: 'Monthly', quarter: 'Quarterly', year: 'Yearly' };
 
-const DEPT_COLORS = {
-  serology:     { accent: 'text-red-400',    bg: 'bg-red-500/20',    border: 'border-red-500/30'    },
-  molecularBio: { accent: 'text-sky-400',    bg: 'bg-sky-500/20',    border: 'border-sky-500/30'    },
-  microbiology: { accent: 'text-yellow-400', bg: 'bg-yellow-500/20', border: 'border-yellow-500/30' },
-};
-
-const DEPT_NAMES = { serology: 'Serology', molecularBio: 'Molecular Biology', microbiology: 'Microbiology' };
+const DEPT_NAMES   = { serology: 'Serology', molecularBio: 'Molecular Biology', microbiology: 'Microbiology' };
+const DEPT_SYMBOL  = { serology: '⊕',        molecularBio: '⌬',                 microbiology: '⊙' };
 
 // Score grade tiers
 const GRADE = score =>
@@ -64,7 +60,7 @@ function getColumnDates(anchorDate, scale, count) {
   return dates;
 }
 
-function CellStatus({ status, isDueFlag, isToday, critical, outOfRange }) {
+function CellStatus({ status, isDueFlag, isToday, critical, outOfRange, requiresReview, reviewResult }) {
   if (!isDueFlag) return (
     <div className="w-full h-full flex items-center justify-center">
       <Minus className="w-3 h-3 text-muted-foreground/20" />
@@ -76,6 +72,26 @@ function CellStatus({ status, isDueFlag, isToday, critical, outOfRange }) {
       <AlertTriangle className="w-4 h-4 text-orange-400" />
     </div>
   );
+  // Review-required and already filled → show review state
+  if (requiresReview && (status === 'done' || status === 'late')) {
+    if (reviewResult === 'pass') return (
+      <div className={cn('w-full h-full flex items-center justify-center rounded relative', isToday && 'ring-1 ring-emerald-400/40')} title="Review: Pass">
+        <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+        <span className="absolute top-0.5 right-0.5 w-2 h-2 rounded-full bg-emerald-500 border border-card" />
+      </div>
+    );
+    if (reviewResult === 'fail') return (
+      <div className="w-full h-full flex items-center justify-center" title="Review: Fail">
+        <XCircle className="w-4 h-4 text-red-400" />
+      </div>
+    );
+    // Awaiting review
+    return (
+      <div className="w-full h-full flex items-center justify-center" title="Awaiting result review">
+        <CheckCircle2 className="w-4 h-4 text-amber-300/70" />
+      </div>
+    );
+  }
   if (status === 'done') return (
     <div className={cn('w-full h-full flex items-center justify-center rounded', isToday && 'ring-1 ring-emerald-400/40')}>
       <CheckCircle2 className="w-4 h-4 text-emerald-400" />
@@ -98,6 +114,24 @@ function CellStatus({ status, isDueFlag, isToday, critical, outOfRange }) {
   );
 }
 
+// Readable hover summary for a matrix cell.
+function cellTitle(param, col, e, due, oor) {
+  if (!due) return '';
+  const dateLabel = new Date(col + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' });
+  if (!e) return `${param.name} · ${dateLabel} · Pending`;
+  const statusLabel = { done: 'Done', late: 'Late', missed: 'Missed' }[e.status] || e.status;
+  const parts = [param.name, dateLabel, statusLabel + (oor ? ' (out of range)' : '')];
+  if (e.value !== null && e.value !== undefined && e.value !== '') parts.push(`${e.value}${param.unit ? ' ' + param.unit : ''}`);
+  if (e.done_by_name) parts.push(`by ${e.done_by_name}`);
+  if (e.notes) parts.push(`”${e.notes}”`);
+  if (param.requires_review === 1) {
+    if (e.result === 'pass')   parts.push(`Review: Pass`);
+    else if (e.result === 'fail') parts.push(`Review: Fail — ${e.review_note || ''}`);
+    else if (e.status === 'done' || e.status === 'late') parts.push('Awaiting result review');
+  }
+  return parts.join(' · ');
+}
+
 export default function MatrixPage({ dept }) {
   const today = todayStr();
   const COL_COUNT = 14;
@@ -108,12 +142,15 @@ export default function MatrixPage({ dept }) {
   const [scale,      setScale]    = useState('day');
   const [anchorDate, setAnchor]   = useState(() => addDays(today, -7));
   const [entry,      setEntry]    = useState(null);   // {param, date, locked}
+  const [review,     setReview]   = useState(null);   // {param, date} — admin review modal
   const [addParam,   setAddParam] = useState(false);  // open param builder
   const [exporting,  setExporting]= useState(false);  // open export modal
+  const [query,      setQuery]    = useState('');     // row filter
 
   const cols = useMemo(() => getColumnDates(anchorDate, scale, COL_COUNT), [anchorDate, scale]);
   const { params, entries, signoffs, closures, loading, reload } = useMatrix(dept, cols[0], cols[cols.length - 1]);
-  const colors = DEPT_COLORS[dept] ?? DEPT_COLORS.serology;
+  const q = query.trim().toLowerCase();
+  const shownParams = q ? params.filter(p => p.name.toLowerCase().includes(q)) : params;
   const scaleIdx = SCALES.indexOf(scale);
 
   // Per-day lock state (only meaningful at day scale)
@@ -163,6 +200,7 @@ export default function MatrixPage({ dept }) {
   // Weighted compliance score
   // Critical params = weight 2, normal = weight 1
   // Done = full, Late = 0.7×, Missed / pending = 0
+  // requires_review params: only result='pass' earns credit (fail/pending = 0)
   const scoreData = useMemo(() => {
     let totalW = 0, earnedW = 0;
     let critDue = 0, critDone = 0;
@@ -174,9 +212,15 @@ export default function MatrixPage({ dept }) {
         if (p.critical) critDue++;
         const e   = entryMap[`${p.id}__${col}`];
         const oor = isOutOfRange(p, e);
-        // Out-of-range readings earn nothing even if marked done
-        if (e?.status === 'done' && !oor) { earnedW += w;       if (p.critical) critDone++; }
-        else if (e?.status === 'late' && !oor) { earnedW += w * 0.7; if (p.critical) critDone++; }
+        if (p.requires_review === 1) {
+          if (e?.result === 'pass' && !oor) {
+            if (e.status === 'done')       { earnedW += w;       if (p.critical) critDone++; }
+            else if (e.status === 'late')  { earnedW += w * 0.7; if (p.critical) critDone++; }
+          }
+        } else {
+          if (e?.status === 'done' && !oor)      { earnedW += w;       if (p.critical) critDone++; }
+          else if (e?.status === 'late' && !oor) { earnedW += w * 0.7; if (p.critical) critDone++; }
+        }
       }
     }
     const pct = totalW === 0 ? null : Math.round((earnedW / totalW) * 100);
@@ -185,8 +229,14 @@ export default function MatrixPage({ dept }) {
 
   const handleCellClick = useCallback((param, dateStr) => {
     if (dateStr > today) return;
-    setEntry({ param, date: dateStr, locked: isLockedForUser(dateStr) });
-  }, [today, isLockedForUser]);
+    const e = entryMap[`${param.id}__${dateStr}`];
+    // Admin clicking a filled review-required cell → ReviewModal
+    if (isAdmin && param.requires_review === 1 && e && (e.status === 'done' || e.status === 'late')) {
+      setReview({ param, date: dateStr });
+    } else {
+      setEntry({ param, date: dateStr, locked: isLockedForUser(dateStr) });
+    }
+  }, [today, isLockedForUser, isAdmin, entryMap]);
 
   const { pct: score, critDue, critDone } = scoreData;
   const grade = score !== null ? GRADE(score) : null;
@@ -197,7 +247,8 @@ export default function MatrixPage({ dept }) {
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 border-b bg-card/50 backdrop-blur gap-4 flex-shrink-0">
         <div>
-          <h1 className={cn('text-base font-semibold', colors.accent)}>
+          <h1 className="text-base font-semibold flex items-center gap-2">
+            <span className="font-mono text-[13px] leading-none text-muted-foreground">{DEPT_SYMBOL[dept]}</span>
             {DEPT_NAMES[dept]}
           </h1>
           <p className="text-xs text-muted-foreground mt-0.5">
@@ -271,21 +322,22 @@ export default function MatrixPage({ dept }) {
       </div>
 
       {/* Legend */}
-      <div className="flex items-center gap-4 px-6 py-2 border-b text-[10px] text-muted-foreground flex-shrink-0">
+      <div className="flex items-center flex-wrap gap-4 px-6 py-2 border-b text-[10px] text-muted-foreground flex-shrink-0">
         {[
-          { color: 'text-emerald-400',        label: 'Done' },
-          { color: 'text-amber-400',           label: 'Done late (0.7×)' },
-          { color: 'text-red-400',             label: 'Missed' },
-          { color: 'text-primary/60',          label: 'Pending' },
-          { color: 'text-muted-foreground/20', label: 'Not scheduled' },
-        ].map(({ color, label }) => (
-          <span key={label} className="flex items-center gap-1">
-            <span className={cn('w-2 h-2 rounded-full bg-current', color)} />
+          { sym: '✓',  label: 'Done' },
+          { sym: '≈',  label: 'Done late (0.7×)' },
+          { sym: '✗',  label: 'Missed' },
+          { sym: '○',  label: 'Pending' },
+          { sym: '–',  label: 'Not scheduled' },
+          { sym: '◷',  label: 'Awaiting review' },
+        ].map(({ sym, label }) => (
+          <span key={label} className="flex items-center gap-1.5">
+            <span className="font-mono text-[11px] leading-none">{sym}</span>
             {label}
           </span>
         ))}
-        <span className="flex items-center gap-1 ml-auto">
-          <span className="w-1.5 h-1.5 rounded-full bg-red-400" />
+        <span className="flex items-center gap-1.5 ml-auto">
+          <span className="font-mono text-[11px]">!</span>
           Critical = 2× weight
         </span>
       </div>
@@ -308,8 +360,13 @@ export default function MatrixPage({ dept }) {
           <table className="w-full border-collapse text-xs" style={{ minWidth: `${COL_COUNT * 52 + 240}px` }}>
             <thead>
               <tr>
-                <th className="sticky left-0 z-10 bg-card border-r border-b px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-widest text-muted-foreground w-56">
-                  Parameter
+                <th className="sticky left-0 z-10 bg-card border-r border-b px-2 py-1.5 text-left w-56">
+                  <div className="relative">
+                    <Search className="w-3 h-3 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" />
+                    <input type="text" value={query} onChange={e => setQuery(e.target.value)}
+                      placeholder="Parameter…"
+                      className="h-6 w-full rounded border bg-background pl-7 pr-2 text-[11px] font-normal normal-case tracking-normal focus:outline-none focus:ring-1 focus:ring-ring" />
+                  </div>
                 </th>
                 {cols.map(col => {
                   const isToday = col === today;
@@ -366,7 +423,14 @@ export default function MatrixPage({ dept }) {
               )}
             </thead>
             <tbody>
-              {params.map((param, pi) => (
+              {shownParams.length === 0 && (
+                <tr>
+                  <td colSpan={cols.length + 1} className="text-center text-xs text-muted-foreground py-8">
+                    No parameters match “{query}”.
+                  </td>
+                </tr>
+              )}
+              {shownParams.map((param, pi) => (
                 <tr key={param.id} className={cn('hover:bg-muted/30 transition-colors', pi % 2 === 0 ? '' : 'bg-muted/10')}>
                   {/* Parameter label */}
                   <td className="sticky left-0 z-10 bg-card border-r border-b px-3 py-1.5 w-56">
@@ -396,6 +460,7 @@ export default function MatrixPage({ dept }) {
                     return (
                       <td key={col}
                         onClick={() => due && !isFuture && handleCellClick(param, col)}
+                        title={cellTitle(param, col, e, due, oor)}
                         className={cn(
                           'border-b border-r p-0.5 h-9 w-12 text-center',
                           isToday && 'bg-primary/5',
@@ -410,6 +475,8 @@ export default function MatrixPage({ dept }) {
                           isToday={isToday}
                           critical={param.critical === 1}
                           outOfRange={oor}
+                          requiresReview={param.requires_review === 1}
+                          reviewResult={e?.result ?? null}
                         />
                       </td>
                     );
@@ -431,6 +498,17 @@ export default function MatrixPage({ dept }) {
           locked={entry.locked}
           onSave={() => { setEntry(null); reload(); }}
           onClose={() => setEntry(null)}
+        />
+      )}
+
+      {/* Review modal (admin only) */}
+      {review && (
+        <ReviewModal
+          param={review.param}
+          date={review.date}
+          entry={entryMap[`${review.param.id}__${review.date}`]}
+          onSave={() => { setReview(null); reload(); }}
+          onClose={() => setReview(null)}
         />
       )}
 

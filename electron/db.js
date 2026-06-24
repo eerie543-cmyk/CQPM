@@ -40,6 +40,13 @@ function must(res) {
   return res.data;
 }
 
+// Cheap connectivity check — throws if the database is unreachable.
+async function ping() {
+  const { error } = await sb().from('users').select('*', { count: 'exact', head: true });
+  if (error) throw error;
+  return true;
+}
+
 // Seed the default admin once (called on startup).
 async function ensureSeed() {
   const { count, error } = await sb().from('users').select('*', { count: 'exact', head: true });
@@ -88,7 +95,7 @@ async function allParameters() {
     .order('department', { ascending: true })
     .order('sort_order', { ascending: true }).order('id', { ascending: true }));
 }
-async function insertParameter({ department, name, description, scheduleType, frequency, daysOfWeek, dayOfMonth, specificDates, entryType, unit, minValue, maxValue, critical, sortOrder }) {
+async function insertParameter({ department, name, description, scheduleType, frequency, daysOfWeek, dayOfMonth, specificDates, entryType, unit, minValue, maxValue, critical, requiresReview, sortOrder }) {
   const data = must(await sb().from('parameters').insert({
     department, name, description: description || null,
     schedule_type: scheduleType || 'frequency',
@@ -97,8 +104,8 @@ async function insertParameter({ department, name, description, scheduleType, fr
     specific_dates: specificDates || null,
     entry_type: entryType || 'checkbox', unit: unit || null,
     min_value: minValue ?? null, max_value: maxValue ?? null,
-    critical: critical ? 1 : 0, sort_order: sortOrder || 0,
-    created_at: nowStr(),
+    critical: critical ? 1 : 0, requires_review: requiresReview ? 1 : 0,
+    sort_order: sortOrder || 0, created_at: nowStr(),
   }).select('id').single());
   return { lastInsertRowid: data.id };
 }
@@ -124,7 +131,18 @@ async function upsertEntry({ parameterId, slotDate, status, value, notes, doneBy
     status: status || 'done', value: value || null, notes: notes || null,
     done_by_id: doneById, done_by_name: doneByName, department,
     created_at: nowStr(),
+    // Reset review whenever the entry is re-recorded — admin must re-review the new data
+    result: null, reviewed_by_id: null, reviewed_by_name: null, reviewed_at: null, review_note: null,
   }, { onConflict: 'parameter_id,slot_date' }));
+}
+async function reviewEntry({ entryId, result, note, reviewerId, reviewerName }) {
+  must(await sb().from('entries').update({
+    result,
+    reviewed_by_id:   reviewerId,
+    reviewed_by_name: reviewerName,
+    reviewed_at:      nowStr(),
+    review_note:      note || null,
+  }).eq('id', entryId));
 }
 
 // ── Day sign-offs ─────────────────────────────────────────────────
@@ -178,6 +196,86 @@ async function reopenMonth(department, month) {
   must(await sb().from('month_closures').delete().eq('department', department).eq('month', month));
 }
 
+// ── Parameter requests ────────────────────────────────────────────
+async function submitParamRequest({
+  department, name, description, unit,
+  scheduleType, frequency, daysOfWeek, dayOfMonth, specificDates,
+  entryType, minValue, maxValue, critical, requiresReview, sortOrder,
+  requestedById, requestedByName,
+}) {
+  const data = must(await sb().from('parameter_requests').insert({
+    department, name: name.trim(),
+    description:   description?.trim() || null,
+    unit:          unit?.trim() || null,
+    schedule_type: scheduleType || 'frequency',
+    frequency:     frequency || null,
+    days_of_week:  daysOfWeek || null,
+    day_of_month:  dayOfMonth || null,
+    specific_dates: specificDates || null,
+    entry_type:    entryType || 'numeric',
+    min_value:     minValue ?? null,
+    max_value:     maxValue ?? null,
+    critical:      critical ? 1 : 0,
+    requires_review: requiresReview ? 1 : 0,
+    sort_order:    sortOrder || 0,
+    requested_by_id:   requestedById,
+    requested_by_name: requestedByName,
+    requested_at:      nowStr(),
+    status: 'pending',
+  }).select('id').single());
+  return { lastInsertRowid: data.id };
+}
+
+async function listParamRequests({ department, status } = {}) {
+  let q = sb().from('parameter_requests').select('*')
+    .order('requested_at', { ascending: false });
+  if (department) q = q.eq('department', department);
+  if (status)     q = q.eq('status', status);
+  const { data, error } = await q;
+  if (error) throw new Error(error.message);
+  return data ?? [];
+}
+
+async function reviewParamRequest({ requestId, result, note, reviewerId, reviewerName }) {
+  // Read the request before updating (needed if approving)
+  let req = null;
+  if (result === 'approved') {
+    const { data, error } = await sb().from('parameter_requests').select('*').eq('id', requestId).single();
+    if (error) throw new Error(error.message);
+    req = data;
+  }
+
+  must(await sb().from('parameter_requests').update({
+    status:           result,
+    reviewed_by_id:   reviewerId,
+    reviewed_by_name: reviewerName,
+    reviewed_at:      nowStr(),
+    review_note:      note || null,
+  }).eq('id', requestId));
+
+  // On approval: insert the real parameter
+  if (result === 'approved' && req) {
+    must(await sb().from('parameters').insert({
+      department:      req.department,
+      name:            req.name,
+      description:     req.description,
+      unit:            req.unit,
+      schedule_type:   req.schedule_type,
+      frequency:       req.frequency,
+      days_of_week:    req.days_of_week,
+      day_of_month:    req.day_of_month,
+      specific_dates:  req.specific_dates,
+      entry_type:      req.entry_type || 'numeric',
+      min_value:       req.min_value,
+      max_value:       req.max_value,
+      critical:        req.critical,
+      requires_review: req.requires_review,
+      sort_order:      req.sort_order || 0,
+      created_at:      nowStr(),
+    }));
+  }
+}
+
 // ── Lock guard ────────────────────────────────────────────────────
 // Returns a reason string if the day cannot be edited by this role, else null.
 async function dayLockReason(department, slotDate, role) {
@@ -192,10 +290,11 @@ async function dayLockReason(department, slotDate, role) {
 }
 
 module.exports = {
-  ensureSeed,
+  ensureSeed, ping,
   findByUsername, listUsers, insertUser, setPasswordHash, deleteUser,
   listParameters, allParameters, insertParameter, updateParameter, deleteParameter,
-  getEntriesForRange, upsertEntry,
+  getEntriesForRange, upsertEntry, reviewEntry,
   getSignoff, getSignoffsForRange, submitDay, approveDay, reopenDay, listPendingSignoffs,
   getClosure, listClosures, closeMonth, reopenMonth, dayLockReason,
+  submitParamRequest, listParamRequests, reviewParamRequest,
 };

@@ -5,12 +5,13 @@ const bcrypt = require('bcryptjs');
 const ExcelJS = require('exceljs');
 const { buildComplianceWorkbook } = require('./excelReport');
 const {
-  ensureSeed,
+  ensureSeed, ping,
   findByUsername, listUsers, insertUser, setPasswordHash, deleteUser,
   listParameters, allParameters, insertParameter, updateParameter, deleteParameter,
-  getEntriesForRange, upsertEntry,
+  getEntriesForRange, upsertEntry, reviewEntry,
   getSignoff, getSignoffsForRange, submitDay, approveDay, reopenDay, listPendingSignoffs,
   getClosure, listClosures, closeMonth, reopenMonth, dayLockReason,
+  submitParamRequest, listParamRequests, reviewParamRequest,
 } = require('./db');
 const { signToken, verifyToken } = require('./auth');
 
@@ -76,6 +77,12 @@ ipcMain.handle('window:close', (e) => {
 ipcMain.handle('window:is-maximized', (e) =>
   BrowserWindow.fromWebContents(e.sender)?.isMaximized() ?? false
 );
+
+// ── DB health ping (no auth — connectivity check only) ────────────
+ipcMain.handle('db:ping', async () => {
+  try { await ping(); return { ok: true }; }
+  catch { return { ok: false }; }
+});
 
 // ── Auth: Login ───────────────────────────────────────────────────
 ipcMain.handle('auth:login', async (_e, { username, password } = {}) => {
@@ -266,6 +273,19 @@ ipcMain.handle('entries:save', async (_e, { token, entry } = {}) => {
   } catch (err) { return { error: err.message }; }
 });
 
+// ── Entries: Review result (admin) ───────────────────────────────
+ipcMain.handle('entries:review', async (_e, { token, entryId, result, note } = {}) => {
+  let payload;
+  try { payload = verifyToken(token); } catch { return { error: 'Session expired.' }; }
+  if (payload.role !== 'admin') return { error: 'Unauthorized.' };
+  if (!entryId) return { error: 'Entry required.' };
+  if (!['pass', 'fail'].includes(result)) return { error: 'Result must be pass or fail.' };
+  try {
+    await reviewEntry({ entryId, result, note, reviewerId: payload.sub, reviewerName: payload.displayName });
+    return { success: true };
+  } catch (err) { return { error: err.message }; }
+});
+
 // ── Sign-offs: range (for matrix lock indicators) ─────────────────
 ipcMain.handle('signoff:range', async (_e, { token, dept, from, to } = {}) => {
   try { verifyToken(token); } catch { return { error: 'Session expired.' }; }
@@ -377,4 +397,51 @@ ipcMain.handle('export:xlsx', async (e, { token, payload } = {}) => {
   } catch (err) {
     return { success: false, error: err.message };
   }
+});
+
+// ── Parameter requests: submit (any authenticated user) ───────────
+ipcMain.handle('paramreq:submit', async (_e, { token, data } = {}) => {
+  let payload;
+  try { payload = verifyToken(token); } catch { return { error: 'Session expired.' }; }
+  if (!data?.name || !data?.department)
+    return { error: 'Name and department are required.' };
+  try {
+    const result = await submitParamRequest({
+      ...data,
+      requestedById:   payload.sub,
+      requestedByName: payload.displayName,
+    });
+    return { success: true, id: result.lastInsertRowid };
+  } catch (err) { return { error: err.message }; }
+});
+
+// ── Parameter requests: list (admin only) ─────────────────────────
+ipcMain.handle('paramreq:list', async (_e, { token, status } = {}) => {
+  let payload;
+  try { payload = verifyToken(token); } catch { return { error: 'Session expired.' }; }
+  if (payload.role !== 'admin') return { error: 'Unauthorized.' };
+  try {
+    const requests = await listParamRequests({ status: status || undefined });
+    return { requests };
+  } catch (err) { return { error: err.message }; }
+});
+
+// ── Parameter requests: review approve/reject (admin only) ────────
+ipcMain.handle('paramreq:review', async (_e, { token, requestId, result, note } = {}) => {
+  let payload;
+  try { payload = verifyToken(token); } catch { return { error: 'Session expired.' }; }
+  if (payload.role !== 'admin') return { error: 'Unauthorized.' };
+  if (!requestId) return { error: 'Request ID required.' };
+  if (!['approved', 'rejected'].includes(result)) return { error: 'Result must be approved or rejected.' };
+  if (result === 'rejected' && !note?.trim()) return { error: 'A rejection reason is required.' };
+  try {
+    await reviewParamRequest({
+      requestId,
+      result,
+      note:         note?.trim() || null,
+      reviewerId:   payload.sub,
+      reviewerName: payload.displayName,
+    });
+    return { success: true };
+  } catch (err) { return { error: err.message }; }
 });

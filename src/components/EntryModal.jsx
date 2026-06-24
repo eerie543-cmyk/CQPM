@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { X, CheckCircle2, XCircle, Loader2, Lock, AlertTriangle } from 'lucide-react';
+import { X, CheckCircle2, XCircle, Loader2, Lock, AlertTriangle, Clock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { todayStr, isOutOfRange } from '@/lib/schedule';
@@ -199,6 +199,30 @@ export default function EntryModal({ param, date, existing, dept, locked, onSave
               {existing.created_at && ` on ${new Date(existing.created_at.replace(' ', 'T') + 'Z').toLocaleString('en-IN')}`}
               {!locked && ' — saving again will overwrite it.'}
             </p>
+          )}
+
+          {/* Review verdict (for review-required params that have been reviewed) */}
+          {param.requires_review === 1 && existing && (
+            <div className={cn(
+              'flex items-start gap-2 p-2.5 rounded-lg border text-xs',
+              existing.result === 'pass'  ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+              : existing.result === 'fail' ? 'border-red-500/30 bg-red-500/10 text-red-300'
+              : 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+            )}>
+              {existing.result === 'pass'  ? <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+              : existing.result === 'fail' ? <XCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+              : <Clock className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />}
+              <div>
+                {existing.result === 'pass'  ? `Review: Pass — ${existing.review_note || ''}`
+                : existing.result === 'fail' ? `Review: Fail — ${existing.review_note || ''}`
+                : 'Awaiting admin result review.'}
+                {existing.reviewed_by_name && (
+                  <span className="block text-[10px] opacity-70 mt-0.5">
+                    Reviewed by {existing.reviewed_by_name}
+                  </span>
+                )}
+              </div>
+            </div>
           )}
 
           {error && <p className="text-xs text-destructive">{error}</p>}

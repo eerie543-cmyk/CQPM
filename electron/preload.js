@@ -17,8 +17,9 @@ contextBridge.exposeInMainWorld('cqpm', {
     remove: (token, id)     => ipcRenderer.invoke('params:remove', { token, id }),
   },
   entries: {
-    getRange: (token, dept, from, to) => ipcRenderer.invoke('entries:get-range', { token, dept, from, to }),
-    save:     (token, entry)          => ipcRenderer.invoke('entries:save',      { token, entry }),
+    getRange: (token, dept, from, to)           => ipcRenderer.invoke('entries:get-range', { token, dept, from, to }),
+    save:     (token, entry)                    => ipcRenderer.invoke('entries:save',      { token, entry }),
+    review:   (token, entryId, result, note)    => ipcRenderer.invoke('entries:review',    { token, entryId, result, note }),
   },
   signoff: {
     range:   (token, dept, from, to) => ipcRenderer.invoke('signoff:range',   { token, dept, from, to }),
@@ -35,6 +36,14 @@ contextBridge.exposeInMainWorld('cqpm', {
   },
   report: {
     xlsx: (token, payload) => ipcRenderer.invoke('export:xlsx', { token, payload }),
+  },
+  paramreq: {
+    submit: (token, data)                    => ipcRenderer.invoke('paramreq:submit', { token, data }),
+    list:   (token, status)                  => ipcRenderer.invoke('paramreq:list',   { token, status }),
+    review: (token, requestId, result, note) => ipcRenderer.invoke('paramreq:review', { token, requestId, result, note }),
+  },
+  db: {
+    ping: () => ipcRenderer.invoke('db:ping'),
   },
   win: {
     minimize:       () => ipcRenderer.invoke('window:minimize'),

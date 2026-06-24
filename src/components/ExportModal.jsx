@@ -8,8 +8,18 @@ import { buildDeptRows } from '@/lib/buildExportPayload';
 const ALL_DEPTS = ['serology', 'molecularBio', 'microbiology'];
 const DEPT_LABEL = { serology: 'Serology', molecularBio: 'Molecular Biology', microbiology: 'Microbiology' };
 
-function monthStart() {
+export const EXPORT_DEFAULTS_KEY = 'cqpm:export_defaults';
+
+function loadExportDefaults() {
+  try { return JSON.parse(localStorage.getItem(EXPORT_DEFAULTS_KEY) || 'null') || {}; }
+  catch { return {}; }
+}
+
+function computeFromDate(range) {
   const d = new Date();
+  if (range === 'last_7')  { d.setDate(d.getDate() - 6);  return d.toISOString().slice(0, 10); }
+  if (range === 'last_30') { d.setDate(d.getDate() - 29); return d.toISOString().slice(0, 10); }
+  if (range === 'last_90') { d.setDate(d.getDate() - 89); return d.toISOString().slice(0, 10); }
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
 }
 
@@ -17,9 +27,9 @@ export default function ExportModal({ dept, onClose }) {
   const { token } = useAuth();
   const today = todayStr();
 
-  const [from,  setFrom]  = useState(monthStart());
+  const [from,  setFrom]  = useState(() => { const d = loadExportDefaults(); return computeFromDate(d.range || 'current_month'); });
   const [to,    setTo]    = useState(today);
-  const [scope, setScope] = useState('current'); // 'current' | 'all'
+  const [scope, setScope] = useState(() => loadExportDefaults().scope || 'current');
   const [busy,  setBusy]  = useState(false);
   const [error, setError] = useState('');
   const [done,  setDone]  = useState('');
