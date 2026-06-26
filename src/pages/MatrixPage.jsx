@@ -1,15 +1,17 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
-import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut, CheckCircle2, XCircle, Circle, AlertCircle, AlertTriangle, Minus, Plus, Lock, RotateCcw, RefreshCw, FileSpreadsheet, Search } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut, CheckCircle2, XCircle, Circle, AlertCircle, AlertTriangle, Minus, Plus, Lock, RotateCcw, RefreshCw, FileSpreadsheet, Search, CalendarDays, LayoutGrid } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useMatrix } from '@/hooks/useMatrix';
 import { useAuth } from '@/hooks/useAuth';
 import { useRemoteConfigContext } from '@/hooks/useRemoteConfigContext';
-import { isDue, isOutOfRange, todayStr, addDays, toLocalYMD } from '@/lib/schedule';
+import { isDue, isOutOfRange, todayStr, addDays, toLocalYMD, monthGridRange, monthFirst } from '@/lib/schedule';
 import EntryModal from '@/components/EntryModal';
 import ReviewModal from '@/components/ReviewModal';
 import ParamBuilderModal from '@/components/ParamBuilderModal';
 import ExportModal from '@/components/ExportModal';
 import DayDetailPanel from '@/components/DayDetailPanel';
+import MonthCalendar from '@/components/MonthCalendar';
 
 const SCALES = ['day', 'week', 'month', 'quarter', 'year'];
 const SCALE_LABELS = { day: 'Daily', week: 'Weekly', month: 'Monthly', quarter: 'Quarterly', year: 'Yearly' };
@@ -60,6 +62,13 @@ function getColumnDates(anchorDate, scale, count) {
   }
   return dates;
 }
+
+// Slide+fade for timeline period navigation (direction-aware).
+const tlVariants = {
+  enter:  dir => ({ x: dir > 0 ? 50 : -50, opacity: 0 }),
+  center: { x: 0, opacity: 1 },
+  exit:   dir => ({ x: dir > 0 ? -50 : 50, opacity: 0 }),
+};
 
 function CellStatus({ status, isDueFlag, isToday, critical, outOfRange, requiresReview, reviewResult }) {
   if (!isDueFlag) return (
@@ -140,14 +149,18 @@ export default function MatrixPage({ dept }) {
   const { features } = useRemoteConfigContext();
   const exportEnabled = isAdmin && features.export !== false;
 
+  const [view,       setView]     = useState('calendar'); // 'calendar' | 'timeline'
   const [scale,      setScale]    = useState('day');
   const [anchorDate, setAnchor]   = useState(() => addDays(today, -7));
+  const [monthAnchor, setMonthAnchor] = useState(() => monthFirst(today)); // first of visible month
+  const [pageDir,    setPageDir]  = useState(0);      // calendar slide direction
+  const [tlDir,      setTlDir]    = useState(0);      // timeline slide direction
   const [entry,      setEntry]    = useState(null);   // {param, date, locked}
   const [review,     setReview]   = useState(null);   // {param, date} — admin review modal
   const [addParam,   setAddParam] = useState(false);  // open param builder
   const [exporting,  setExporting]= useState(false);  // open export modal
   const [query,      setQuery]    = useState('');     // row filter
-  const [dayDetail,  setDayDetail]= useState(null);   // date string for details panel
+  const [dayDetail,  setDayDetail]= useState(null);   // { date, scale } for details panel
   const [collapsedY, setCollapsedY] = useState(false); // toggle collapse Y-axis (parameter column)
 
   const containerRef = useRef(null);
@@ -184,6 +197,7 @@ export default function MatrixPage({ dept }) {
   }, [handleZoom]);
 
   useEffect(() => {
+    if (view !== 'timeline') return;       // gestures only apply to the timeline grid
     const container = containerRef.current;
     if (!container) return;
 
@@ -269,10 +283,15 @@ export default function MatrixPage({ dept }) {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [handleZoomThrottled]);
+  }, [handleZoomThrottled, view]);
 
   const cols = useMemo(() => getColumnDates(anchorDate, scale, COL_COUNT), [anchorDate, scale]);
-  const { params, entries, signoffs, closures, loading, reload } = useMatrix(dept, cols[0], cols[cols.length - 1]);
+  const [calFrom, calTo] = useMemo(() => monthGridRange(monthAnchor), [monthAnchor]);
+
+  // Data range follows the active view: calendar grid span vs timeline columns.
+  const rangeFrom = view === 'calendar' ? calFrom : cols[0];
+  const rangeTo   = view === 'calendar' ? calTo   : cols[cols.length - 1];
+  const { params, entries, signoffs, closures, loading, reload } = useMatrix(dept, rangeFrom, rangeTo);
   const q = query.trim().toLowerCase();
   const shownParams = q ? params.filter(p => p.name.toLowerCase().includes(q)) : params;
   const scaleIdx = SCALES.indexOf(scale);
@@ -303,6 +322,7 @@ export default function MatrixPage({ dept }) {
   }, [dayLock, isAdmin]);
 
   function navigate(dir) {
+    setTlDir(dir);
     const step = { day: 7, week: 4, month: 3, quarter: 2, year: 1 }[scale] ?? 7;
     const d = new Date(anchorDate + 'T00:00:00');
     if (scale === 'day')          d.setDate(d.getDate()       + dir * step);
@@ -313,7 +333,16 @@ export default function MatrixPage({ dept }) {
     setAnchor(toLocalYMD(d));
   }
 
-  function jumpToToday() { setAnchor(addDays(today, -7)); }
+  function jumpToToday() { setTlDir(0); setAnchor(addDays(today, -7)); }
+
+  // Calendar month paging
+  function changeMonth(dir) {
+    setPageDir(dir);
+    const d = new Date(monthAnchor + 'T00:00:00');
+    d.setMonth(d.getMonth() + dir);
+    setMonthAnchor(toLocalYMD(d));
+  }
+  function monthToToday() { setPageDir(0); setMonthAnchor(monthFirst(today)); }
 
   const entryMap = useMemo(() => {
     const m = {};
@@ -321,17 +350,31 @@ export default function MatrixPage({ dept }) {
     return m;
   }, [entries]);
 
+  // The set of date-columns + scale the score is measured over follows the view:
+  // timeline = the visible columns; calendar = every day of the visible month grid.
+  const scoreCols = useMemo(() => {
+    if (view === 'timeline') return cols;
+    const out = [];
+    const cur = new Date(calFrom + 'T00:00:00');
+    const end = new Date(calTo + 'T00:00:00');
+    while (cur <= end) { out.push(toLocalYMD(cur)); cur.setDate(cur.getDate() + 1); }
+    return out;
+  }, [view, cols, calFrom, calTo]);
+  const scoreScale = view === 'timeline' ? scale : 'day';
+
   // Weighted compliance score
   // Critical params = weight 2, normal = weight 1
   // Done = full, Late = 0.7×, Missed / pending = 0
   // requires_review params: only result='pass' earns credit (fail/pending = 0)
+  // Future slots are excluded — you can't be non-compliant for a day not yet here.
   const scoreData = useMemo(() => {
     let totalW = 0, earnedW = 0;
     let critDue = 0, critDone = 0;
     for (const p of params) {
       const w = p.critical === 1 ? 2 : 1;
-      for (const col of cols) {
-        if (!isDue(p, col, scale)) continue;
+      for (const col of scoreCols) {
+        if (col > today) continue;
+        if (!isDue(p, col, scoreScale)) continue;
         totalW += w;
         if (p.critical) critDue++;
         const e   = entryMap[`${p.id}__${col}`];
@@ -349,7 +392,7 @@ export default function MatrixPage({ dept }) {
     }
     const pct = totalW === 0 ? null : Math.round((earnedW / totalW) * 100);
     return { pct, critDue, critDone };
-  }, [params, cols, entryMap, scale]);
+  }, [params, scoreCols, entryMap, scoreScale, today]);
 
   const handleCellClick = useCallback((param, dateStr) => {
     if (dateStr > today) return;
@@ -376,7 +419,7 @@ export default function MatrixPage({ dept }) {
             {DEPT_NAMES[dept]}
           </h1>
           <p className="text-xs text-muted-foreground mt-0.5">
-            {params.length} parameter{params.length !== 1 ? 's' : ''} · {SCALE_LABELS[scale]} view
+            {params.length} parameter{params.length !== 1 ? 's' : ''} · {view === 'calendar' ? 'Calendar' : `${SCALE_LABELS[scale]} timeline`}
           </p>
         </div>
 
@@ -414,34 +457,53 @@ export default function MatrixPage({ dept }) {
             </button>
           )}
 
-          {/* Scale controls */}
-          <div className="flex items-center gap-1 border rounded-lg p-1">
-            <button onClick={() => setScale(SCALES[Math.max(0, scaleIdx - 1)])}
-              disabled={scaleIdx === 0}
-              className="p-1 rounded hover:bg-muted disabled:opacity-30 transition-colors">
-              <ZoomIn className="w-3.5 h-3.5" />
+          {/* View toggle — Calendar | Timeline */}
+          <div className="flex items-center border rounded-lg p-0.5">
+            <button onClick={() => setView('calendar')}
+              className={cn('flex items-center gap-1 h-6 px-2 text-xs rounded-md font-medium transition-colors',
+                view === 'calendar' ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted')}
+              title="Calendar view">
+              <CalendarDays className="w-3.5 h-3.5" /> Calendar
             </button>
-            <span className="text-xs font-medium px-1 min-w-[52px] text-center">{SCALE_LABELS[scale]}</span>
-            <button onClick={() => setScale(SCALES[Math.min(SCALES.length - 1, scaleIdx + 1)])}
-              disabled={scaleIdx === SCALES.length - 1}
-              className="p-1 rounded hover:bg-muted disabled:opacity-30 transition-colors">
-              <ZoomOut className="w-3.5 h-3.5" />
+            <button onClick={() => setView('timeline')}
+              className={cn('flex items-center gap-1 h-6 px-2 text-xs rounded-md font-medium transition-colors',
+                view === 'timeline' ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted')}
+              title="Timeline (spreadsheet) view">
+              <LayoutGrid className="w-3.5 h-3.5" /> Timeline
             </button>
           </div>
 
-          {/* Navigation */}
-          <div className="flex items-center gap-1">
-            <button onClick={() => navigate(-1)} className="p-1.5 rounded-md hover:bg-muted transition-colors">
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <button onClick={jumpToToday}
-              className="px-2.5 py-1 text-xs rounded-md hover:bg-muted transition-colors font-medium">
-              Today
-            </button>
-            <button onClick={() => navigate(1)} className="p-1.5 rounded-md hover:bg-muted transition-colors">
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
+          {/* Timeline-only controls: scale + navigation */}
+          {view === 'timeline' && (
+            <>
+              <div className="flex items-center gap-1 border rounded-lg p-1">
+                <button onClick={() => setScale(SCALES[Math.max(0, scaleIdx - 1)])}
+                  disabled={scaleIdx === 0}
+                  className="p-1 rounded hover:bg-muted disabled:opacity-30 transition-colors">
+                  <ZoomIn className="w-3.5 h-3.5" />
+                </button>
+                <span className="text-xs font-medium px-1 min-w-[52px] text-center">{SCALE_LABELS[scale]}</span>
+                <button onClick={() => setScale(SCALES[Math.min(SCALES.length - 1, scaleIdx + 1)])}
+                  disabled={scaleIdx === SCALES.length - 1}
+                  className="p-1 rounded hover:bg-muted disabled:opacity-30 transition-colors">
+                  <ZoomOut className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              <div className="flex items-center gap-1">
+                <button onClick={() => navigate(-1)} className="p-1.5 rounded-md hover:bg-muted transition-colors">
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <button onClick={jumpToToday}
+                  className="px-2.5 py-1 text-xs rounded-md hover:bg-muted transition-colors font-medium">
+                  Today
+                </button>
+                <button onClick={() => navigate(1)} className="p-1.5 rounded-md hover:bg-muted transition-colors">
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </div>
 
@@ -466,11 +528,28 @@ export default function MatrixPage({ dept }) {
         </span>
       </div>
 
-      {/* Matrix */}
+      {/* Calendar view (default) */}
+      {view === 'calendar' && (
+        <MonthCalendar
+          monthAnchor={monthAnchor}
+          direction={pageDir}
+          params={params}
+          entryMap={entryMap}
+          today={today}
+          onSelectDay={(d) => setDayDetail({ date: d, scale: 'day' })}
+          onPrev={() => changeMonth(-1)}
+          onNext={() => changeMonth(1)}
+          onToday={monthToToday}
+          loading={loading}
+        />
+      )}
+
+      {/* Timeline (spreadsheet) view */}
+      {view === 'timeline' && (
       <div
         ref={containerRef}
         className={cn(
-          "flex-1 overflow-auto",
+          "flex-1 overflow-hidden relative",
           isGrabbing ? "cursor-grabbing select-none" : "cursor-grab"
         )}
       >
@@ -490,7 +569,17 @@ export default function MatrixPage({ dept }) {
             )}
           </div>
         ) : (
-          <div className="relative">
+          <AnimatePresence initial={false} custom={tlDir} mode="popLayout">
+            <motion.div
+              key={`${anchorDate}|${scale}`}
+              custom={tlDir}
+              variants={tlVariants}
+              initial="enter"
+              animate="center"
+              exit="exit"
+              transition={{ type: 'spring', stiffness: 380, damping: 38 }}
+              className="relative h-full overflow-auto"
+            >
             {loading && (
               <div className="absolute top-2 right-4 flex items-center gap-1.5 bg-background/80 border border-border/50 text-[10px] px-2.5 py-0.5 rounded-full shadow-sm text-muted-foreground backdrop-blur z-20 pointer-events-none animate-pulse">
                 <RefreshCw className="w-3 h-3 animate-spin text-primary" />
@@ -541,7 +630,7 @@ export default function MatrixPage({ dept }) {
                   const isPast  = col < today;
                   return (
                     <th key={col}
-                      onClick={() => { if (!isDraggingRef.current) setDayDetail(col); }}
+                      onClick={() => { if (!isDraggingRef.current) setDayDetail({ date: col, scale }); }}
                       className={cn(
                         'border-b border-r px-1 py-2 text-center font-medium w-12 cursor-pointer hover:bg-muted/50 transition-colors',
                         isToday ? 'bg-yellow-400/25 dark:bg-yellow-400/15 text-yellow-600 dark:text-yellow-400 font-semibold' : 'text-muted-foreground',
@@ -670,9 +759,11 @@ export default function MatrixPage({ dept }) {
               ))}
             </tbody>
           </table>
-          </div>
+            </motion.div>
+          </AnimatePresence>
         )}
       </div>
+      )}
 
       {/* Entry modal */}
       {entry && (
@@ -715,8 +806,8 @@ export default function MatrixPage({ dept }) {
       {/* Day Detail Panel */}
       {dayDetail && (
         <DayDetailPanel
-          date={dayDetail}
-          scale={scale}
+          date={dayDetail.date}
+          scale={dayDetail.scale}
           dept={dept}
           params={params}
           entryMap={entryMap}

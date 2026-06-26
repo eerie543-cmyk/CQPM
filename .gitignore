@@ -3,3 +3,5 @@ dist/
 out/
 .env
 *.log
+.env.beta
+release/

@@ -1,5 +1,16 @@
 const path = require('path');
-require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
+const fs = require('fs');
+// Load environment. Packaged builds read resources/.env (placed via electron-builder
+// extraResources); in dev we read the project-root .env. First existing file wins.
+for (const envPath of [
+  process.resourcesPath ? path.join(process.resourcesPath, '.env') : null,
+  path.join(__dirname, '..', '.env'),
+]) {
+  if (envPath && fs.existsSync(envPath)) {
+    require('dotenv').config({ path: envPath });
+    break;
+  }
+}
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const bcrypt = require('bcryptjs');
 const ExcelJS = require('exceljs');

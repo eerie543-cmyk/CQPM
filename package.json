@@ -1,19 +1,56 @@
 {
   "name": "cqpm",
-  "version": "1.0.0",
+  "version": "1.0.0-beta.1",
   "description": "Continuous Quality Process Monitoring",
+  "author": "Aadvik",
   "main": "electron/main.js",
   "scripts": {
     "dev": "concurrently \"vite\" \"wait-on http://localhost:5174 && electron .\"",
     "build": "vite build",
-    "start": "electron ."
+    "start": "electron .",
+    "dist": "vite build && electron-builder --win nsis -c.directories.output=C:/cqpm-release"
+  },
+  "build": {
+    "appId": "com.aadvik.cqpm",
+    "productName": "CQPM",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": ".env.beta",
+        "to": ".env"
+      }
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "CQPM-Beta-Setup-${version}.${ext}"
+    }
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",
     "bcryptjs": "^2.4.3",
-    "better-sqlite3": "^11.0.0",
     "dotenv": "^17.4.2",
     "exceljs": "^4.4.0",
+    "framer-motion": "^12.41.0",
     "jsonwebtoken": "^9.0.2",
     "ws": "^8.21.0"
   },
@@ -24,6 +61,7 @@
     "clsx": "^2.1.1",
     "concurrently": "^9.1.2",
     "electron": "^32.0.0",
+    "electron-builder": "^26.15.3",
     "lucide-react": "^0.454.0",
     "postcss": "^8.4.49",
     "react": "^18.3.1",

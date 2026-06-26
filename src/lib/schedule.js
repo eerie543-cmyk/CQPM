@@ -18,6 +18,25 @@ export function addDays(dateStr, n) {
   return toLocalYMD(d);
 }
 
+// First/last date of the 6×7 (Monday-first) grid for the month containing `anchorYMD`.
+export function monthGridRange(anchorYMD) {
+  const first = new Date(anchorYMD + 'T00:00:00');
+  first.setDate(1);
+  const offset = (first.getDay() + 6) % 7; // days back to Monday
+  const start = new Date(first);
+  start.setDate(start.getDate() - offset);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 41);
+  return [toLocalYMD(start), toLocalYMD(end)];
+}
+
+// First day of the month containing `dateStr`.
+export function monthFirst(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  d.setDate(1);
+  return toLocalYMD(d);
+}
+
 // Is `param` due on `dateStr`?  `scale` widens the check for coarser grid views.
 export function isDue(param, dateStr, scale = 'day') {
   if (scale === 'day') {
