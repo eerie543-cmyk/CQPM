@@ -45,6 +45,10 @@ contextBridge.exposeInMainWorld('cqpm', {
   db: {
     ping: () => ipcRenderer.invoke('db:ping'),
   },
+  config: {
+    fetch:     ()     => ipcRenderer.invoke('config:fetch'),
+    heartbeat: (data) => ipcRenderer.invoke('config:heartbeat', data),
+  },
   win: {
     minimize:       () => ipcRenderer.invoke('window:minimize'),
     toggleMaximize: () => ipcRenderer.invoke('window:toggle-maximize'),

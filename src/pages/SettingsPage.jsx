@@ -10,18 +10,7 @@ import { useTheme } from '@/hooks/useTheme';
 import { useAuth } from '@/hooks/useAuth';
 import { useRemoteConfigContext } from '@/hooks/useRemoteConfigContext';
 import { INACTIVITY_LS_KEY } from '@/hooks/useInactivityLogout';
-import { toLocalYMD } from '@/lib/schedule';
 import { EXPORT_DEFAULTS_KEY } from '@/components/ExportModal';
-
-// ── localStorage helpers ──────────────────────────────────────────────────────
-function computeFromDate(range) {
-  const d = new Date();
-  if (range === 'last_7')  { d.setDate(d.getDate() - 6);  return toLocalYMD(d); }
-  if (range === 'last_30') { d.setDate(d.getDate() - 29); return toLocalYMD(d); }
-  if (range === 'last_90') { d.setDate(d.getDate() - 89); return toLocalYMD(d); }
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
-}
 
 // ── Layout primitives ─────────────────────────────────────────────────────────
 function Section({ title, icon: Icon, children }) {
@@ -354,7 +343,7 @@ export default function SettingsPage() {
 
           {/* ── Remote Configuration ──────────────────────────────────── */}
           <Section title="Remote Configuration" icon={Radio}>
-            <Row label="Connection status" sublabel={configured ? `Last synced at ${fmtSync}` : 'Set VITE_REMOTE_CONFIG_URL and VITE_REMOTE_SECRET to enable'}>
+            <Row label="Connection status" sublabel={configured ? `Last synced at ${fmtSync}` : 'Set REMOTE_CONFIG_URL and REMOTE_CONFIG_SECRET in .env to enable'}>
               <div className="flex items-center gap-2">
                 <span className={cn('text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full border', remoteStatusColor)}>
                   {remoteStatusLabel}

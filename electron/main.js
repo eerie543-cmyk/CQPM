@@ -11,7 +11,7 @@ for (const envPath of [
     break;
   }
 }
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, net } = require('electron');
 const bcrypt = require('bcryptjs');
 const ExcelJS = require('exceljs');
 const { buildComplianceWorkbook } = require('./excelReport');
@@ -28,12 +28,24 @@ const { signToken, verifyToken } = require('./auth');
 
 const isDev = !app.isPackaged;
 
+// Windows: pin app identity so the taskbar icon matches the .exe icon
+if (process.platform === 'win32') app.setAppUserModelId('com.aadvik.cqpm');
+
+const iconPath = isDev
+  ? path.join(__dirname, '..', 'favicon.ico')
+  : path.join(process.resourcesPath, 'favicon.ico');
+
+// Remote config — env vars read in main process only (never exposed to renderer)
+const REMOTE_CONFIG_URL    = process.env.REMOTE_CONFIG_URL;
+const REMOTE_CONFIG_SECRET = process.env.REMOTE_CONFIG_SECRET;
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1440,
     height: 900,
     minWidth: 1100,
     minHeight: 720,
+    icon: iconPath,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -51,7 +63,19 @@ function createWindow() {
     win.loadFile(path.join(__dirname, '../dist/index.html'));
   }
 
-  win.once('ready-to-show', () => win.show());
+  win.once('ready-to-show', () => {
+    win.maximize();
+    win.show();
+    if (!isDev) {
+      // S4: disable DevTools in production builds
+      win.setMenu(null);
+      win.webContents.on('before-input-event', (event, input) => {
+        if (input.key === 'F12') event.preventDefault();
+        if ((input.control || input.meta) && input.shift && input.key.toLowerCase() === 'i') event.preventDefault();
+      });
+      win.webContents.on('devtools-opened', () => win.webContents.closeDevTools());
+    }
+  });
 }
 
 app.whenReady().then(async () => {
@@ -207,8 +231,11 @@ ipcMain.handle('auth:delete-user', async (_e, { token, userId } = {}) => {
 
 // ── Parameters: List (by dept) ────────────────────────────────────
 ipcMain.handle('params:list', async (_e, { token, dept } = {}) => {
-  try { verifyToken(token); } catch { return { error: 'Session expired.' }; }
-  try { return { params: await listParameters(dept) }; }
+  let payload;
+  try { payload = verifyToken(token); } catch { return { error: 'Session expired.' }; }
+  // S2: staff can only read their own department
+  const safeDept = payload.role === 'staff' ? payload.department : dept;
+  try { return { params: await listParameters(safeDept) }; }
   catch (err) { return { error: err.message }; }
 });
 
@@ -228,10 +255,20 @@ ipcMain.handle('params:create', async (_e, { token, data } = {}) => {
   if (payload.role !== 'admin') return { error: 'Unauthorized.' };
   if (!data?.name || !data?.department)
     return { error: 'Name and department are required.' };
+  // U3: length limits
+  if (data.name.length > 200) return { error: 'Parameter name too long (max 200 chars).' };
+  if (data.description && data.description.length > 1000) return { error: 'Description too long (max 1000 chars).' };
   if (data.scheduleType !== 'specific' && !data.frequency)
     return { error: 'Frequency is required for frequency-based parameters.' };
   if (data.scheduleType === 'specific' && !data.specificDates)
     return { error: 'At least one specific date is required.' };
+  // U4: numeric boundary validation
+  if (data.minValue != null && data.minValue !== '') {
+    if (!Number.isFinite(Number(data.minValue))) return { error: 'Invalid minimum value.' };
+  }
+  if (data.maxValue != null && data.maxValue !== '') {
+    if (!Number.isFinite(Number(data.maxValue))) return { error: 'Invalid maximum value.' };
+  }
   try {
     const result = await insertParameter(data);
     return { success: true, id: result.lastInsertRowid };
@@ -239,11 +276,20 @@ ipcMain.handle('params:create', async (_e, { token, data } = {}) => {
 });
 
 // ── Parameters: Update (admin) ────────────────────────────────────
+const PARAM_UPDATE_ALLOWED = [
+  'name', 'description', 'schedule_type', 'frequency', 'days_of_week',
+  'day_of_month', 'specific_dates', 'entry_type', 'unit', 'min_value',
+  'max_value', 'critical', 'requires_review', 'sort_order', 'active',
+];
 ipcMain.handle('params:update', async (_e, { token, id, fields } = {}) => {
   let payload;
   try { payload = verifyToken(token); } catch { return { error: 'Session expired.' }; }
   if (payload.role !== 'admin') return { error: 'Unauthorized.' };
-  try { await updateParameter(id, fields); return { success: true }; }
+  // S8: whitelist updatable columns
+  const safeFields = Object.fromEntries(
+    Object.entries(fields || {}).filter(([k]) => PARAM_UPDATE_ALLOWED.includes(k))
+  );
+  try { await updateParameter(id, safeFields); return { success: true }; }
   catch (err) { return { error: err.message }; }
 });
 
@@ -258,8 +304,11 @@ ipcMain.handle('params:remove', async (_e, { token, id } = {}) => {
 
 // ── Entries: Get range ────────────────────────────────────────────
 ipcMain.handle('entries:get-range', async (_e, { token, dept, from, to } = {}) => {
-  try { verifyToken(token); } catch { return { error: 'Session expired.' }; }
-  try { return { entries: await getEntriesForRange(dept, from, to) }; }
+  let payload;
+  try { payload = verifyToken(token); } catch { return { error: 'Session expired.' }; }
+  // S2: staff can only read their own department
+  const safeDept = payload.role === 'staff' ? payload.department : dept;
+  try { return { entries: await getEntriesForRange(safeDept, from, to) }; }
   catch (err) { return { error: err.message }; }
 });
 
@@ -274,8 +323,17 @@ ipcMain.handle('entries:save', async (_e, { token, entry } = {}) => {
   try { payload = verifyToken(token); } catch { return { error: 'Session expired.' }; }
   if (!entry?.parameterId || !entry?.slotDate) return { error: 'Parameter and date required.' };
 
+  // S3: staff can only write entries for their own department
+  if (payload.role === 'staff' && payload.department !== entry.department)
+    return { error: 'You can only record entries for your own department.' };
+
+  // U4: validate numeric value; U3: cap notes length
+  if (entry.value !== null && entry.value !== undefined && entry.value !== '') {
+    if (!Number.isFinite(Number(entry.value))) return { error: 'Invalid entry value.' };
+  }
+  if (entry.notes && entry.notes.length > 2000) return { error: 'Notes too long (max 2000 chars).' };
+
   try {
-    // Locking: block edits to submitted/approved/closed days
     const lock = await dayLockReason(entry.department, entry.slotDate, payload.role);
     if (lock) return { error: LOCK_MESSAGES[lock] };
 
@@ -299,18 +357,24 @@ ipcMain.handle('entries:review', async (_e, { token, entryId, result, note } = {
 
 // ── Sign-offs: range (for matrix lock indicators) ─────────────────
 ipcMain.handle('signoff:range', async (_e, { token, dept, from, to } = {}) => {
-  try { verifyToken(token); } catch { return { error: 'Session expired.' }; }
+  let payload;
+  try { payload = verifyToken(token); } catch { return { error: 'Session expired.' }; }
+  // S2: staff can only read their own department
+  const safeDept = payload.role === 'staff' ? payload.department : dept;
   try {
-    const [signoffs, closures] = await Promise.all([getSignoffsForRange(dept, from, to), listClosures(dept)]);
+    const [signoffs, closures] = await Promise.all([getSignoffsForRange(safeDept, from, to), listClosures(safeDept)]);
     return { signoffs, closures };
   } catch (err) { return { error: err.message }; }
 });
 
 // ── Sign-offs: get one day ────────────────────────────────────────
 ipcMain.handle('signoff:get', async (_e, { token, dept, date } = {}) => {
-  try { verifyToken(token); } catch { return { error: 'Session expired.' }; }
+  let payload;
+  try { payload = verifyToken(token); } catch { return { error: 'Session expired.' }; }
+  // S2: staff can only read their own department
+  const safeDept = payload.role === 'staff' ? payload.department : dept;
   try {
-    const [signoff, closure] = await Promise.all([getSignoff(dept, date), getClosure(dept, date.slice(0, 7))]);
+    const [signoff, closure] = await Promise.all([getSignoff(safeDept, date), getClosure(safeDept, date.slice(0, 7))]);
     return { signoff: signoff || null, closed: !!closure };
   } catch (err) { return { error: err.message }; }
 });
@@ -416,6 +480,16 @@ ipcMain.handle('paramreq:submit', async (_e, { token, data } = {}) => {
   try { payload = verifyToken(token); } catch { return { error: 'Session expired.' }; }
   if (!data?.name || !data?.department)
     return { error: 'Name and department are required.' };
+  // U3: length limits
+  if (data.name.length > 200) return { error: 'Parameter name too long (max 200 chars).' };
+  if (data.description && data.description.length > 1000) return { error: 'Description too long (max 1000 chars).' };
+  // U4: numeric boundary validation
+  if (data.minValue != null && data.minValue !== '') {
+    if (!Number.isFinite(Number(data.minValue))) return { error: 'Invalid minimum value.' };
+  }
+  if (data.maxValue != null && data.maxValue !== '') {
+    if (!Number.isFinite(Number(data.maxValue))) return { error: 'Invalid maximum value.' };
+  }
   // Staff may only request for their own department
   if (payload.role === 'staff' && payload.department !== data.department)
     return { error: 'You can only request parameters for your own department.' };
@@ -460,4 +534,33 @@ ipcMain.handle('paramreq:review', async (_e, { token, requestId, result, note } 
     });
     return { success: true };
   } catch (err) { return { error: err.message }; }
+});
+
+// ── Remote config: fetch + heartbeat (secret lives in main only) ──
+// S5: renderer never sees REMOTE_CONFIG_SECRET — IPC proxies the requests.
+ipcMain.handle('config:fetch', async () => {
+  if (!REMOTE_CONFIG_URL || !REMOTE_CONFIG_SECRET) return { ok: false, configured: false, data: null };
+  try {
+    const res = await net.fetch(REMOTE_CONFIG_URL, {
+      headers: { Authorization: `Bearer ${REMOTE_CONFIG_SECRET}` },
+      cache: 'no-store',
+    });
+    if (!res.ok) return { ok: false, configured: true, data: null };
+    const data = await res.json();
+    return { ok: true, configured: true, data };
+  } catch {
+    return { ok: false, configured: true, data: null };
+  }
+});
+
+ipcMain.handle('config:heartbeat', async (_e, { event, user, department, payload: hbPayload, timestamp } = {}) => {
+  if (!REMOTE_CONFIG_URL || !REMOTE_CONFIG_SECRET) return;
+  const logUrl = REMOTE_CONFIG_URL.replace(/\/api\/config$/, '/api/log');
+  try {
+    await net.fetch(logUrl, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${REMOTE_CONFIG_SECRET}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event, user, department, payload: hbPayload, timestamp }),
+    });
+  } catch { /* non-fatal */ }
 });

@@ -1,10 +1,7 @@
 import { X, CalendarDays, Lock, ArrowRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { isDue, isOutOfRange, todayStr, toLocalYMD } from '@/lib/schedule';
-
-const DEPT_NAMES = {
-  serology: 'Serology', molecularBio: 'Molecular Biology', microbiology: 'Microbiology',
-};
+import { DEPT_LABEL as DEPT_NAMES } from '@/lib/depts';
 
 function getWeekNum(d) {
   const jan1 = new Date(d.getFullYear(), 0, 1);

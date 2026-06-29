@@ -2,11 +2,11 @@ import { useState } from 'react';
 import { X, FileSpreadsheet, Loader2, CheckCircle2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
-import { todayStr, toLocalYMD } from '@/lib/schedule';
+import { todayStr, computeFromDate } from '@/lib/schedule';
 import { buildDeptRows } from '@/lib/buildExportPayload';
+import { DEPT_LABEL } from '@/lib/depts';
 
 const ALL_DEPTS = ['serology', 'molecularBio', 'microbiology'];
-const DEPT_LABEL = { serology: 'Serology', molecularBio: 'Molecular Biology', microbiology: 'Microbiology' };
 
 export const EXPORT_DEFAULTS_KEY = 'cqpm:export_defaults';
 
@@ -15,13 +15,6 @@ function loadExportDefaults() {
   catch { return {}; }
 }
 
-function computeFromDate(range) {
-  const d = new Date();
-  if (range === 'last_7')  { d.setDate(d.getDate() - 6);  return toLocalYMD(d); }
-  if (range === 'last_30') { d.setDate(d.getDate() - 29); return toLocalYMD(d); }
-  if (range === 'last_90') { d.setDate(d.getDate() - 89); return toLocalYMD(d); }
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
-}
 
 export default function ExportModal({ dept, onClose }) {
   const { token } = useAuth();

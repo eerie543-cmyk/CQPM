@@ -3,6 +3,7 @@ import { X, Plus, Loader2, ChevronLeft, ChevronRight, CalendarDays, RefreshCw } 
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { toLocalYMD } from '@/lib/schedule';
+import { DEPT_LABEL as DEPT_NAMES } from '@/lib/depts';
 
 const WEEK_DAYS = [
   { val: '1', label: 'Mon' }, { val: '2', label: 'Tue' },
@@ -12,10 +13,6 @@ const WEEK_DAYS = [
 ];
 
 const DOW_ABBR = ['Su','Mo','Tu','We','Th','Fr','Sa'];
-
-const DEPT_NAMES = {
-  serology: 'Serology', molecularBio: 'Molecular Biology', microbiology: 'Microbiology',
-};
 
 // ── Inline calendar date picker ───────────────────────────────────────────────
 function CalendarPicker({ selected, onChange }) {

@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut, CheckCircle2, XCircle, Circle, AlertCircle, AlertTriangle, Minus, Plus, Lock, RotateCcw, RefreshCw, FileSpreadsheet, Search, CalendarDays, LayoutGrid } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CheckCircle2, XCircle, Circle, AlertCircle, AlertTriangle, Plus, Lock, RotateCcw, RefreshCw, FileSpreadsheet, Search, CalendarDays, LayoutGrid } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useMatrix } from '@/hooks/useMatrix';
 import { useAuth } from '@/hooks/useAuth';
@@ -12,291 +12,205 @@ import ParamBuilderModal from '@/components/ParamBuilderModal';
 import ExportModal from '@/components/ExportModal';
 import DayDetailPanel from '@/components/DayDetailPanel';
 import MonthCalendar from '@/components/MonthCalendar';
+import { DEPT_LABEL as DEPT_NAMES, DEPT_SYMBOL } from '@/lib/depts';
 
-const SCALES = ['day', 'week', 'month', 'quarter', 'year'];
-const SCALE_LABELS = { day: 'Daily', week: 'Weekly', month: 'Monthly', quarter: 'Quarterly', year: 'Yearly' };
-
-const DEPT_NAMES   = { serology: 'Serology', molecularBio: 'Molecular Biology', microbiology: 'Microbiology' };
-const DEPT_SYMBOL  = { serology: '⊕',        molecularBio: '⌬',                 microbiology: '⊙' };
-
-// Score grade tiers
 const GRADE = score =>
   score >= 95 ? { label: 'Excellent', cls: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' }
-  : score >= 80 ? { label: 'Good',     cls: 'bg-blue-500/10 text-blue-400 border-blue-500/20' }
-  : score >= 65 ? { label: 'Fair',     cls: 'bg-amber-500/10 text-amber-400 border-amber-500/20' }
-  :               { label: 'At Risk',  cls: 'bg-red-500/10 text-red-400 border-red-500/20' };
+  : score >= 80 ? { label: 'Good',    cls: 'bg-blue-500/10 text-blue-400 border-blue-500/20' }
+  : score >= 65 ? { label: 'Fair',    cls: 'bg-amber-500/10 text-amber-400 border-amber-500/20' }
+  :               { label: 'At Risk', cls: 'bg-red-500/10 text-red-400 border-red-500/20' };
 
-function formatDate(dateStr, scale) {
-  const d = new Date(dateStr + 'T00:00:00');
-  if (scale === 'day')     return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
-  if (scale === 'week')    return `W${getWeekNum(d)} ${d.getFullYear()}`;
-  if (scale === 'month')   return d.toLocaleDateString('en-IN', { month: 'short', year: '2-digit' });
-  if (scale === 'quarter') return `Q${Math.ceil((d.getMonth() + 1) / 3)} ${d.getFullYear()}`;
-  return String(d.getFullYear());
-}
-
-function getWeekNum(d) {
-  const jan1 = new Date(d.getFullYear(), 0, 1);
-  return Math.ceil(((d - jan1) / 86400000 + jan1.getDay() + 1) / 7);
-}
-
-function getColumnDates(anchorDate, scale, count) {
-  const dates = [];
-  let cursor = new Date(anchorDate + 'T00:00:00');
-
-  if (scale === 'day') {
-    for (let i = 0; i < count; i++) { dates.push(toLocalYMD(cursor)); cursor.setDate(cursor.getDate() + 1); }
-  } else if (scale === 'week') {
-    cursor.setDate(cursor.getDate() - cursor.getDay());
-    for (let i = 0; i < count; i++) { dates.push(toLocalYMD(cursor)); cursor.setDate(cursor.getDate() + 7); }
-  } else if (scale === 'month') {
-    cursor.setDate(1);
-    for (let i = 0; i < count; i++) { dates.push(toLocalYMD(cursor)); cursor.setMonth(cursor.getMonth() + 1); }
-  } else if (scale === 'quarter') {
-    const q = Math.floor(cursor.getMonth() / 3);
-    cursor = new Date(cursor.getFullYear(), q * 3, 1);
-    for (let i = 0; i < count; i++) { dates.push(toLocalYMD(cursor)); cursor.setMonth(cursor.getMonth() + 3); }
-  } else {
-    cursor = new Date(cursor.getFullYear(), 0, 1);
-    for (let i = 0; i < count; i++) { dates.push(toLocalYMD(cursor)); cursor.setFullYear(cursor.getFullYear() + 1); }
-  }
-  return dates;
-}
-
-// Slide+fade for timeline period navigation (direction-aware).
 const tlVariants = {
-  enter:  dir => ({ x: dir > 0 ? 50 : -50, opacity: 0 }),
+  enter:  dir => ({ x: dir > 0 ? 40 : -40, opacity: 0 }),
   center: { x: 0, opacity: 1 },
-  exit:   dir => ({ x: dir > 0 ? -50 : 50, opacity: 0 }),
+  exit:   dir => ({ x: dir > 0 ? -40 : 40, opacity: 0 }),
 };
 
-function CellStatus({ status, isDueFlag, isToday, critical, outOfRange, requiresReview, reviewResult }) {
-  if (!isDueFlag) return (
-    <div className="w-full h-full flex items-center justify-center">
-      <Minus className="w-3 h-3 text-muted-foreground/20" />
-    </div>
-  );
-  // Done/late but value out of allowed range → flag instead of a clean tick
-  if ((status === 'done' || status === 'late') && outOfRange) return (
-    <div className="w-full h-full flex items-center justify-center" title="Recorded value is out of range">
-      <AlertTriangle className="w-4 h-4 text-orange-400" />
-    </div>
-  );
-  // Review-required and already filled → show review state
-  if (requiresReview && (status === 'done' || status === 'late')) {
-    if (reviewResult === 'pass') return (
-      <div className={cn('w-full h-full flex items-center justify-center rounded relative', isToday && 'ring-1 ring-emerald-400/40')} title="Review: Pass">
-        <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-        <span className="absolute top-0.5 right-0.5 w-2 h-2 rounded-full bg-emerald-500 border border-card" />
-      </div>
-    );
-    if (reviewResult === 'fail') return (
-      <div className="w-full h-full flex items-center justify-center" title="Review: Fail">
-        <XCircle className="w-4 h-4 text-red-400" />
-      </div>
-    );
-    // Awaiting review
-    return (
-      <div className="w-full h-full flex items-center justify-center" title="Awaiting result review">
-        <CheckCircle2 className="w-4 h-4 text-amber-300/70" />
-      </div>
-    );
+function dossierStatus(param, e, oor) {
+  if (!e) return { Icon: Circle, cls: 'text-muted-foreground/25' };
+  if ((e.status === 'done' || e.status === 'late') && oor)
+    return { Icon: AlertTriangle, cls: 'text-orange-400' };
+  if (param.requires_review === 1 && (e.status === 'done' || e.status === 'late')) {
+    if (e.result === 'pass') return { Icon: CheckCircle2, cls: 'text-emerald-400' };
+    if (e.result === 'fail') return { Icon: XCircle,      cls: 'text-red-400' };
+    return { Icon: CheckCircle2, cls: 'text-amber-300/60' };
   }
-  if (status === 'done') return (
-    <div className={cn('w-full h-full flex items-center justify-center rounded', isToday && 'ring-1 ring-emerald-400/40')}>
-      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-    </div>
-  );
-  if (status === 'late') return (
-    <div className="w-full h-full flex items-center justify-center">
-      <CheckCircle2 className="w-4 h-4 text-amber-400" />
-    </div>
-  );
-  if (status === 'missed') return (
-    <div className="w-full h-full flex items-center justify-center">
-      <AlertCircle className={cn('w-4 h-4', critical ? 'text-red-400' : 'text-red-400/60')} />
-    </div>
-  );
-  return (
-    <div className={cn('w-full h-full flex items-center justify-center rounded', isToday && 'ring-1 ring-yellow-400/50')}>
-      <Circle className={cn('w-4 h-4', critical ? 'text-primary/80' : 'text-muted-foreground/40')} />
-    </div>
-  );
+  if (e.status === 'done')   return { Icon: CheckCircle2, cls: 'text-emerald-400' };
+  if (e.status === 'late')   return { Icon: CheckCircle2, cls: 'text-amber-400' };
+  if (e.status === 'missed') return { Icon: AlertCircle,  cls: param.critical === 1 ? 'text-red-400' : 'text-red-400/50' };
+  return { Icon: Circle, cls: 'text-muted-foreground/25' };
 }
 
-// Readable hover summary for a matrix cell.
-function cellTitle(param, col, e, due, oor) {
-  if (!due) return '';
-  const dateLabel = new Date(col + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' });
-  if (!e) return `${param.name} · ${dateLabel} · Pending`;
-  const statusLabel = { done: 'Done', late: 'Late', missed: 'Missed' }[e.status] || e.status;
-  const parts = [param.name, dateLabel, statusLabel + (oor ? ' (out of range)' : '')];
-  if (e.value !== null && e.value !== undefined && e.value !== '') parts.push(`${e.value}${param.unit ? ' ' + param.unit : ''}`);
-  if (e.done_by_name) parts.push(`by ${e.done_by_name}`);
-  if (e.notes) parts.push(`”${e.notes}”`);
-  if (param.requires_review === 1) {
-    if (e.result === 'pass')   parts.push(`Review: Pass`);
-    else if (e.result === 'fail') parts.push(`Review: Fail — ${e.review_note || ''}`);
-    else if (e.status === 'done' || e.status === 'late') parts.push('Awaiting result review');
-  }
-  return parts.join(' · ');
+// ── Two-column dossier row: [date | tasks] ────────────────────────
+function DossierDateCard({ date, params, entryMap, isToday, dayLock, isLockedForUser, isAdmin, onParamClick, today, todayCardRef }) {
+  const dueParams = params.filter(p => isDue(p, date, 'day'));
+  if (dueParams.length === 0) return null;
+
+  const dateObj  = new Date(date + 'T00:00:00');
+  const dayAbbr  = dateObj.toLocaleDateString('en-IN', { weekday: 'short' }).toUpperCase();
+  const dayNum   = dateObj.getDate();
+  const monthStr = dateObj.toLocaleDateString('en-IN', { month: 'short' }).toUpperCase();
+  const yearNum  = dateObj.getFullYear();
+  const isFuture = date > today;
+  const lock     = dayLock(date);
+
+  return (
+    <div ref={isToday ? todayCardRef : null} className="relative flex border-b border-border/20 last:border-0">
+
+      {/* Today accent stripe (left edge) */}
+      {isToday && (
+        <div className="absolute left-0 top-0 bottom-0 w-[2px] bg-yellow-400/80 z-10 pointer-events-none" />
+      )}
+
+      {/* ── LEFT: date column ──────────────────── */}
+      <div className={cn(
+        'w-[78px] flex-shrink-0 flex flex-col items-center justify-center gap-0.5 border-r border-border/10 py-3 px-2',
+        isToday ? 'bg-yellow-500/[0.06]' : ''
+      )}>
+        {/* Day abbreviation */}
+        <span className={cn(
+          'text-[7px] font-black tracking-[0.2em] font-mono leading-none',
+          isToday ? 'text-yellow-500/70' : 'text-muted-foreground/25'
+        )}>
+          {dayAbbr}
+        </span>
+
+        {/* Day number — the main visual anchor */}
+        <span className={cn(
+          'text-[22px] font-bold leading-none tabular-nums mt-0.5',
+          isToday    ? 'text-yellow-600 dark:text-yellow-300'
+          : isFuture ? 'text-foreground/20'
+          :             'text-foreground/65'
+        )}>
+          {dayNum}
+        </span>
+
+        {/* Month */}
+        <span className={cn(
+          'text-[8px] leading-none font-semibold tracking-widest mt-0.5',
+          isToday ? 'text-yellow-500/55' : 'text-muted-foreground/30'
+        )}>
+          {monthStr}
+        </span>
+
+        {/* Year */}
+        <span className={cn(
+          'text-[7px] leading-none font-mono mt-px',
+          isToday ? 'text-yellow-500/25' : 'text-muted-foreground/15'
+        )}>
+          {yearNum}
+        </span>
+
+        {/* Now pill */}
+        {isToday && (
+          <span className="mt-1.5 text-[6px] font-bold uppercase tracking-[0.14em] text-yellow-500 bg-yellow-400/15 border border-yellow-400/20 px-1.5 py-[2px] rounded-sm leading-none">
+            now
+          </span>
+        )}
+
+        {/* Lock status */}
+        {lock && (
+          <div className="mt-1">
+            {lock === 'closed'    && <Lock className="w-2.5 h-2.5 text-red-400/50" title="Month closed" />}
+            {lock === 'approved'  && <CheckCircle2 className="w-2.5 h-2.5 text-emerald-400/50" title="Approved" />}
+            {lock === 'submitted' && <Lock className="w-2.5 h-2.5 text-amber-400/50" title="Submitted" />}
+            {lock === 'reopened'  && <RotateCcw className="w-2.5 h-2.5 text-muted-foreground/25" title="Reopened" />}
+          </div>
+        )}
+      </div>
+
+      {/* ── RIGHT: tasks column ────────────────── */}
+      <div className={cn(
+        'flex-1 min-w-0 flex flex-col divide-y divide-border/[0.07]',
+        isToday && 'bg-yellow-500/[0.015]'
+      )}>
+        {dueParams.map(param => {
+          const e        = entryMap[`${param.id}__${date}`];
+          const oor      = isOutOfRange(param, e);
+          const { Icon, cls } = dossierStatus(param, e, oor);
+          const clickable = !isFuture;
+          const hasValue  = e?.value !== undefined && e?.value !== null && e?.value !== '';
+
+          return (
+            <div
+              key={param.id}
+              onClick={() => clickable && onParamClick(param, date)}
+              className={cn(
+                'flex items-center gap-2.5 px-4 py-[7px] transition-colors duration-100',
+                clickable ? 'cursor-pointer hover:bg-muted/[0.18]' : 'opacity-25 cursor-default'
+              )}
+            >
+              <Icon className={cn('w-[11px] h-[11px] flex-shrink-0', cls)} />
+
+              <span className={cn(
+                'flex-1 text-[11px] leading-tight truncate',
+                param.critical === 1
+                  ? 'font-semibold text-foreground/85'
+                  : 'font-normal text-foreground/50'
+              )}>
+                {param.name}
+              </span>
+
+              <div className="flex items-center gap-2 flex-shrink-0">
+                {param.critical === 1 && (
+                  <span className="text-[7px] text-red-400/60 font-bold uppercase tracking-widest">crit</span>
+                )}
+                {param.requires_review === 1 && e && !e.result && (e.status === 'done' || e.status === 'late') && (
+                  <span className="text-[7px] text-amber-400/70">review</span>
+                )}
+                {hasValue && (
+                  <span className={cn('text-[10px] tabular-nums font-mono',
+                    oor ? 'text-orange-400/80' : 'text-muted-foreground/35')}>
+                    {e.value}{param.unit ? ` ${param.unit}` : ''}
+                  </span>
+                )}
+                {oor && <AlertTriangle className="w-[9px] h-[9px] text-orange-400/80 flex-shrink-0" />}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 export default function MatrixPage({ dept }) {
   const today = todayStr();
-  const COL_COUNT = 14;
   const { isAdmin } = useAuth();
   const { features } = useRemoteConfigContext();
   const exportEnabled = isAdmin && features.export !== false;
 
-  const [view,       setView]     = useState('calendar'); // 'calendar' | 'timeline'
-  const [scale,      setScale]    = useState('day');
-  const [anchorDate, setAnchor]   = useState(() => addDays(today, -7));
-  const [monthAnchor, setMonthAnchor] = useState(() => monthFirst(today)); // first of visible month
-  const [pageDir,    setPageDir]  = useState(0);      // calendar slide direction
-  const [tlDir,      setTlDir]    = useState(0);      // timeline slide direction
-  const [entry,      setEntry]    = useState(null);   // {param, date, locked}
-  const [review,     setReview]   = useState(null);   // {param, date} — admin review modal
-  const [addParam,   setAddParam] = useState(false);  // open param builder
-  const [exporting,  setExporting]= useState(false);  // open export modal
-  const [query,      setQuery]    = useState('');     // row filter
-  const [dayDetail,  setDayDetail]= useState(null);   // { date, scale } for details panel
-  const [collapsedY, setCollapsedY] = useState(false); // toggle collapse Y-axis (parameter column)
+  const [view,        setView]        = useState('calendar');
+  const [anchorDate,  setAnchor]      = useState(() => addDays(today, -7));
+  const [monthAnchor, setMonthAnchor] = useState(() => monthFirst(today));
+  const [pageDir,     setPageDir]     = useState(0);
+  const [tlDir,       setTlDir]       = useState(0);
+  const [entry,       setEntry]       = useState(null);
+  const [review,      setReview]      = useState(null);
+  const [addParam,    setAddParam]    = useState(false);
+  const [exporting,   setExporting]   = useState(false);
+  const [query,       setQuery]       = useState('');
+  const [dayDetail,   setDayDetail]   = useState(null);
 
-  const containerRef = useRef(null);
-  const [isGrabbing, setIsGrabbing] = useState(false);
-  const isDraggingRef = useRef(false);
-  const dragStartRef = useRef({ x: 0, active: false });
-  const accumXRef = useRef(0);
-  const lastSwipeTimeRef = useRef(0);
-  const lastZoomTimeRef = useRef(0);
-
-  // Dynamic ref to navigate to avoid recreating useEffect on every navigate change
-  const navigateRef = useRef(navigate);
-  navigateRef.current = navigate;
-
-  // Zoom function
-  const handleZoom = useCallback((direction) => {
-    setScale(curr => {
-      const idx = SCALES.indexOf(curr);
-      if (direction === 'out' && idx < SCALES.length - 1) {
-        return SCALES[idx + 1];
-      }
-      if (direction === 'in' && idx > 0) {
-        return SCALES[idx - 1];
-      }
-      return curr;
-    });
-  }, []);
-
-  const handleZoomThrottled = useCallback((direction) => {
-    const now = Date.now();
-    if (now - lastZoomTimeRef.current < 200) return;
-    lastZoomTimeRef.current = now;
-    handleZoom(direction);
-  }, [handleZoom]);
+  const todayCardRef = useRef(null);
 
   useEffect(() => {
-    if (view !== 'timeline') return;       // gestures only apply to the timeline grid
-    const container = containerRef.current;
-    if (!container) return;
+    if (view !== 'timeline') return;
+    const id = setTimeout(() => todayCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150);
+    return () => clearTimeout(id);
+  }, [view, anchorDate]);
 
-    // 1. Wheel event handler for zoom & horizontal swipe
-    const handleWheel = (e) => {
-      // A. Touchpad pinch-to-zoom (ctrlKey is true)
-      if (e.ctrlKey) {
-        e.preventDefault();
-        const dir = e.deltaY < 0 ? 'out' : 'in'; // Pinch out/zoom out vs pinch in/zoom in
-        handleZoomThrottled(dir);
-        return;
-      }
-
-      // B. Scroll wheel zoom on headers (timeline)
-      const targetHeader = e.target.closest('thead');
-      if (targetHeader) {
-        e.preventDefault();
-        const dir = e.deltaY < 0 ? 'out' : 'in'; // Scroll up zooms out (day to year), scroll down zooms in
-        handleZoomThrottled(dir);
-        return;
-      }
-
-      // C. Double-finger slide navigation (horizontal scroll deltaX)
-      if (Math.abs(e.deltaX) > 3) {
-        e.preventDefault();
-        const now = Date.now();
-        if (now - lastSwipeTimeRef.current > 150) {
-          accumXRef.current += e.deltaX;
-          if (Math.abs(accumXRef.current) > 60) {
-            const dir = accumXRef.current > 0 ? -1 : 1; // deltaX > 0 means slide left -> past; deltaX < 0 means slide right -> future
-            navigateRef.current(dir);
-            accumXRef.current = 0;
-            lastSwipeTimeRef.current = now;
-          }
-        }
-      }
-    };
-
-    // 2. Mouse drag-to-navigate event handlers
-    const handleMouseDown = (e) => {
-      // Only handle left clicks
-      if (e.button !== 0) return;
-      dragStartRef.current = { x: e.clientX, active: true };
-      setIsGrabbing(true);
-    };
-
-    const handleMouseMove = (e) => {
-      if (!dragStartRef.current.active) return;
-      
-      const diffX = dragStartRef.current.x - e.clientX;
-      const absDiffX = Math.abs(diffX);
-
-      if (absDiffX > 5) {
-        isDraggingRef.current = true;
-      }
-
-      if (absDiffX > 80) {
-        const dir = diffX > 0 ? 1 : -1; // Drag left -> navigate(1) (future); Drag right -> navigate(-1) (past)
-        navigateRef.current(dir);
-        dragStartRef.current.x = e.clientX; // Update starting x for smooth continuous dragging
-      }
-    };
-
-    const handleMouseUp = () => {
-      if (dragStartRef.current.active) {
-        dragStartRef.current.active = false;
-        setIsGrabbing(false);
-        // Small delay to ensure click handlers check isDraggingRef before it is reset
-        setTimeout(() => {
-          isDraggingRef.current = false;
-        }, 50);
-      }
-    };
-
-    container.addEventListener('wheel', handleWheel, { passive: false });
-    container.addEventListener('mousedown', handleMouseDown);
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
-
-    return () => {
-      container.removeEventListener('wheel', handleWheel);
-      container.removeEventListener('mousedown', handleMouseDown);
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [handleZoomThrottled, view]);
-
-  const cols = useMemo(() => getColumnDates(anchorDate, scale, COL_COUNT), [anchorDate, scale]);
+  const tlRangeFrom = anchorDate;
+  const tlRangeTo   = useMemo(() => addDays(anchorDate, 59), [anchorDate]);
   const [calFrom, calTo] = useMemo(() => monthGridRange(monthAnchor), [monthAnchor]);
 
-  // Data range follows the active view: calendar grid span vs timeline columns.
-  const rangeFrom = view === 'calendar' ? calFrom : cols[0];
-  const rangeTo   = view === 'calendar' ? calTo   : cols[cols.length - 1];
+  const rangeFrom = view === 'calendar' ? calFrom : tlRangeFrom;
+  const rangeTo   = view === 'calendar' ? calTo   : tlRangeTo;
+
   const { params, entries, signoffs, closures, loading, reload } = useMatrix(dept, rangeFrom, rangeTo);
   const q = query.trim().toLowerCase();
   const shownParams = q ? params.filter(p => p.name.toLowerCase().includes(q)) : params;
-  const scaleIdx = SCALES.indexOf(scale);
 
-  // Per-day lock state (only meaningful at day scale)
   const signoffMap = useMemo(() => {
     const m = {};
     for (const s of signoffs) m[s.slot_date] = s;
@@ -313,7 +227,6 @@ export default function MatrixPage({ dept }) {
     return null;
   }, [signoffMap, closedMonths]);
 
-  // Is the day read-only for the current user?
   const isLockedForUser = useCallback((date) => {
     const lock = dayLock(date);
     if (lock === 'closed' || lock === 'approved') return true;
@@ -323,19 +236,13 @@ export default function MatrixPage({ dept }) {
 
   function navigate(dir) {
     setTlDir(dir);
-    const step = { day: 7, week: 4, month: 3, quarter: 2, year: 1 }[scale] ?? 7;
     const d = new Date(anchorDate + 'T00:00:00');
-    if (scale === 'day')          d.setDate(d.getDate()       + dir * step);
-    else if (scale === 'week')    d.setDate(d.getDate()       + dir * step * 7);
-    else if (scale === 'month')   d.setMonth(d.getMonth()     + dir * step);
-    else if (scale === 'quarter') d.setMonth(d.getMonth()     + dir * step * 3);
-    else                          d.setFullYear(d.getFullYear() + dir * step);
+    d.setDate(d.getDate() + dir * 30);
     setAnchor(toLocalYMD(d));
   }
 
   function jumpToToday() { setTlDir(0); setAnchor(addDays(today, -7)); }
 
-  // Calendar month paging
   function changeMonth(dir) {
     setPageDir(dir);
     const d = new Date(monthAnchor + 'T00:00:00');
@@ -350,39 +257,44 @@ export default function MatrixPage({ dept }) {
     return m;
   }, [entries]);
 
-  // The set of date-columns + scale the score is measured over follows the view:
-  // timeline = the visible columns; calendar = every day of the visible month grid.
-  const scoreCols = useMemo(() => {
-    if (view === 'timeline') return cols;
+  const dossierDates = useMemo(() => {
+    if (view !== 'timeline') return [];
     const out = [];
-    const cur = new Date(calFrom + 'T00:00:00');
-    const end = new Date(calTo + 'T00:00:00');
+    const cur = new Date(tlRangeFrom + 'T00:00:00');
+    const end = new Date(tlRangeTo   + 'T00:00:00');
+    while (cur <= end) {
+      const ds = toLocalYMD(cur);
+      if (shownParams.some(p => isDue(p, ds, 'day'))) out.push(ds);
+      cur.setDate(cur.getDate() + 1);
+    }
+    return out;
+  }, [view, shownParams, tlRangeFrom, tlRangeTo]);
+
+  const scoreCols = useMemo(() => {
+    const from = view === 'calendar' ? calFrom : tlRangeFrom;
+    const to   = view === 'calendar' ? calTo   : tlRangeTo;
+    const out  = [];
+    const cur  = new Date(from + 'T00:00:00');
+    const end  = new Date(to   + 'T00:00:00');
     while (cur <= end) { out.push(toLocalYMD(cur)); cur.setDate(cur.getDate() + 1); }
     return out;
-  }, [view, cols, calFrom, calTo]);
-  const scoreScale = view === 'timeline' ? scale : 'day';
+  }, [view, calFrom, calTo, tlRangeFrom, tlRangeTo]);
 
-  // Weighted compliance score
-  // Critical params = weight 2, normal = weight 1
-  // Done = full, Late = 0.7×, Missed / pending = 0
-  // requires_review params: only result='pass' earns credit (fail/pending = 0)
-  // Future slots are excluded — you can't be non-compliant for a day not yet here.
   const scoreData = useMemo(() => {
-    let totalW = 0, earnedW = 0;
-    let critDue = 0, critDone = 0;
+    let totalW = 0, earnedW = 0, critDue = 0, critDone = 0;
     for (const p of params) {
       const w = p.critical === 1 ? 2 : 1;
       for (const col of scoreCols) {
         if (col > today) continue;
-        if (!isDue(p, col, scoreScale)) continue;
+        if (!isDue(p, col, 'day')) continue;
         totalW += w;
         if (p.critical) critDue++;
         const e   = entryMap[`${p.id}__${col}`];
         const oor = isOutOfRange(p, e);
         if (p.requires_review === 1) {
           if (e?.result === 'pass' && !oor) {
-            if (e.status === 'done')       { earnedW += w;       if (p.critical) critDone++; }
-            else if (e.status === 'late')  { earnedW += w * 0.7; if (p.critical) critDone++; }
+            if (e.status === 'done')      { earnedW += w;       if (p.critical) critDone++; }
+            else if (e.status === 'late') { earnedW += w * 0.7; if (p.critical) critDone++; }
           }
         } else {
           if (e?.status === 'done' && !oor)      { earnedW += w;       if (p.critical) critDone++; }
@@ -392,12 +304,11 @@ export default function MatrixPage({ dept }) {
     }
     const pct = totalW === 0 ? null : Math.round((earnedW / totalW) * 100);
     return { pct, critDue, critDone };
-  }, [params, scoreCols, entryMap, scoreScale, today]);
+  }, [params, scoreCols, entryMap, today]);
 
   const handleCellClick = useCallback((param, dateStr) => {
     if (dateStr > today) return;
     const e = entryMap[`${param.id}__${dateStr}`];
-    // Admin clicking a filled review-required cell → ReviewModal
     if (isAdmin && param.requires_review === 1 && e && (e.status === 'done' || e.status === 'late')) {
       setReview({ param, date: dateStr });
     } else {
@@ -408,10 +319,13 @@ export default function MatrixPage({ dept }) {
   const { pct: score, critDue, critDone } = scoreData;
   const grade = score !== null ? GRADE(score) : null;
 
+  const fmtShort = (ds) =>
+    new Date(ds + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+
   return (
     <div className="flex flex-col h-full">
 
-      {/* Header */}
+      {/* ── Header ─────────────────────────────────────────────── */}
       <div className="flex items-center justify-between px-6 py-4 border-b bg-card/50 backdrop-blur gap-4 flex-shrink-0">
         <div>
           <h1 className="text-base font-semibold flex items-center gap-2">
@@ -419,26 +333,25 @@ export default function MatrixPage({ dept }) {
             {DEPT_NAMES[dept]}
           </h1>
           <p className="text-xs text-muted-foreground mt-0.5">
-            {params.length} parameter{params.length !== 1 ? 's' : ''} · {view === 'calendar' ? 'Calendar' : `${SCALE_LABELS[scale]} timeline`}
+            {params.length} parameter{params.length !== 1 ? 's' : ''} ·{' '}
+            {view === 'calendar'
+              ? 'Calendar'
+              : `${fmtShort(tlRangeFrom)} – ${fmtShort(tlRangeTo)}`}
           </p>
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Score + grade badge */}
           {grade && (
             <div className={cn('px-2.5 py-1 rounded-full text-xs font-semibold border flex items-center gap-1.5', grade.cls)}>
               <span>{score}%</span>
               <span className="opacity-70">·</span>
               <span>{grade.label}</span>
               {critDue > 0 && (
-                <span className="text-[9px] opacity-60 ml-0.5">
-                  ({critDone}/{critDue} crit)
-                </span>
+                <span className="text-[9px] opacity-60 ml-0.5">({critDone}/{critDue} crit)</span>
               )}
             </div>
           )}
 
-          {/* Export — admin only, remotely gateable */}
           {exportEnabled && (
             <button onClick={() => setExporting(true)}
               className="flex items-center gap-1 h-7 px-2.5 text-xs rounded-md border hover:border-primary/60 hover:bg-primary/5 text-muted-foreground hover:text-primary transition-colors"
@@ -448,7 +361,6 @@ export default function MatrixPage({ dept }) {
             </button>
           )}
 
-          {/* Add parameter — admin only */}
           {isAdmin && (
             <button onClick={() => setAddParam(true)}
               className="flex items-center gap-1 h-7 px-2.5 text-xs rounded-md border border-dashed hover:border-primary/60 hover:bg-primary/5 text-muted-foreground hover:text-primary transition-colors">
@@ -457,65 +369,44 @@ export default function MatrixPage({ dept }) {
             </button>
           )}
 
-          {/* View toggle — Calendar | Timeline */}
           <div className="flex items-center border rounded-lg p-0.5">
             <button onClick={() => setView('calendar')}
               className={cn('flex items-center gap-1 h-6 px-2 text-xs rounded-md font-medium transition-colors',
-                view === 'calendar' ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted')}
-              title="Calendar view">
+                view === 'calendar' ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted')}>
               <CalendarDays className="w-3.5 h-3.5" /> Calendar
             </button>
             <button onClick={() => setView('timeline')}
               className={cn('flex items-center gap-1 h-6 px-2 text-xs rounded-md font-medium transition-colors',
-                view === 'timeline' ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted')}
-              title="Timeline (spreadsheet) view">
+                view === 'timeline' ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted')}>
               <LayoutGrid className="w-3.5 h-3.5" /> Timeline
             </button>
           </div>
 
-          {/* Timeline-only controls: scale + navigation */}
           {view === 'timeline' && (
-            <>
-              <div className="flex items-center gap-1 border rounded-lg p-1">
-                <button onClick={() => setScale(SCALES[Math.max(0, scaleIdx - 1)])}
-                  disabled={scaleIdx === 0}
-                  className="p-1 rounded hover:bg-muted disabled:opacity-30 transition-colors">
-                  <ZoomIn className="w-3.5 h-3.5" />
-                </button>
-                <span className="text-xs font-medium px-1 min-w-[52px] text-center">{SCALE_LABELS[scale]}</span>
-                <button onClick={() => setScale(SCALES[Math.min(SCALES.length - 1, scaleIdx + 1)])}
-                  disabled={scaleIdx === SCALES.length - 1}
-                  className="p-1 rounded hover:bg-muted disabled:opacity-30 transition-colors">
-                  <ZoomOut className="w-3.5 h-3.5" />
-                </button>
-              </div>
-
-              <div className="flex items-center gap-1">
-                <button onClick={() => navigate(-1)} className="p-1.5 rounded-md hover:bg-muted transition-colors">
-                  <ChevronLeft className="w-4 h-4" />
-                </button>
-                <button onClick={jumpToToday}
-                  className="px-2.5 py-1 text-xs rounded-md hover:bg-muted transition-colors font-medium">
-                  Today
-                </button>
-                <button onClick={() => navigate(1)} className="p-1.5 rounded-md hover:bg-muted transition-colors">
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-              </div>
-            </>
+            <div className="flex items-center gap-0.5">
+              <button onClick={() => navigate(-1)} className="p-1.5 rounded hover:bg-muted transition-colors text-muted-foreground hover:text-foreground">
+                <ChevronLeft className="w-3.5 h-3.5" />
+              </button>
+              <button onClick={jumpToToday}
+                className="px-2 py-1 text-[11px] rounded hover:bg-muted transition-colors font-medium text-muted-foreground hover:text-foreground">
+                Today
+              </button>
+              <button onClick={() => navigate(1)} className="p-1.5 rounded hover:bg-muted transition-colors text-muted-foreground hover:text-foreground">
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
           )}
         </div>
       </div>
 
-      {/* Legend */}
+      {/* ── Legend ─────────────────────────────────────────────── */}
       <div className="flex items-center flex-wrap gap-4 px-6 py-2 border-b text-[10px] text-muted-foreground flex-shrink-0">
         {[
-          { sym: '✓',  label: 'Done' },
-          { sym: '≈',  label: 'Done late (0.7×)' },
-          { sym: '✗',  label: 'Missed' },
-          { sym: '○',  label: 'Pending' },
-          { sym: '–',  label: 'Not scheduled' },
-          { sym: '◷',  label: 'Awaiting review' },
+          { sym: '✓', label: 'Done' },
+          { sym: '≈', label: 'Done late (0.7×)' },
+          { sym: '✗', label: 'Missed' },
+          { sym: '○', label: 'Pending' },
+          { sym: '◷', label: 'Awaiting review' },
         ].map(({ sym, label }) => (
           <span key={label} className="flex items-center gap-1.5">
             <span className="font-mono text-[11px] leading-none">{sym}</span>
@@ -528,7 +419,7 @@ export default function MatrixPage({ dept }) {
         </span>
       </div>
 
-      {/* Calendar view (default) */}
+      {/* ── Calendar view ──────────────────────────────────────── */}
       {view === 'calendar' && (
         <MonthCalendar
           monthAnchor={monthAnchor}
@@ -544,228 +435,89 @@ export default function MatrixPage({ dept }) {
         />
       )}
 
-      {/* Timeline (spreadsheet) view */}
+      {/* ── Timeline dossier view ──────────────────────────────── */}
       {view === 'timeline' && (
-      <div
-        ref={containerRef}
-        className={cn(
-          "flex-1 overflow-hidden relative",
-          isGrabbing ? "cursor-grabbing select-none" : "cursor-grab"
-        )}
-      >
-        {params.length === 0 && loading ? (
-          <div className="flex items-center justify-center h-40 text-muted-foreground text-sm">
-            <RefreshCw className="w-4 h-4 animate-spin mr-2 text-primary" />
-            Loading…
-          </div>
-        ) : params.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-48 gap-3 text-muted-foreground text-sm">
-            <p>No parameters defined for {DEPT_NAMES[dept]} yet.</p>
-            {isAdmin && (
-              <button onClick={() => setAddParam(true)}
-                className="flex items-center gap-1.5 h-7 px-3 text-xs rounded-md border hover:bg-muted transition-colors">
-                <Plus className="w-3 h-3" /> Add the first parameter
-              </button>
-            )}
-          </div>
-        ) : (
-          <AnimatePresence initial={false} custom={tlDir} mode="popLayout">
-            <motion.div
-              key={`${anchorDate}|${scale}`}
-              custom={tlDir}
-              variants={tlVariants}
-              initial="enter"
-              animate="center"
-              exit="exit"
-              transition={{ type: 'spring', stiffness: 380, damping: 38 }}
-              className="relative h-full overflow-auto"
-            >
-            {loading && (
-              <div className="absolute top-2 right-4 flex items-center gap-1.5 bg-background/80 border border-border/50 text-[10px] px-2.5 py-0.5 rounded-full shadow-sm text-muted-foreground backdrop-blur z-20 pointer-events-none animate-pulse">
-                <RefreshCw className="w-3 h-3 animate-spin text-primary" />
-                Updating...
-              </div>
-            )}
-            <table
-              className={cn(
-                "w-full border-collapse text-xs transition-opacity duration-200",
-                loading && "opacity-75 pointer-events-none"
+        <div className="flex-1 min-h-0 overflow-hidden relative">
+          {params.length === 0 && loading ? (
+            <div className="flex items-center justify-center h-40 text-muted-foreground text-sm">
+              <RefreshCw className="w-4 h-4 animate-spin mr-2 text-primary" />
+              Loading…
+            </div>
+          ) : params.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-48 gap-3 text-muted-foreground text-sm">
+              <p>No parameters defined for {DEPT_NAMES[dept]} yet.</p>
+              {isAdmin && (
+                <button onClick={() => setAddParam(true)}
+                  className="flex items-center gap-1.5 h-7 px-3 text-xs rounded-md border hover:bg-muted transition-colors">
+                  <Plus className="w-3 h-3" /> Add the first parameter
+                </button>
               )}
-              style={{ minWidth: `${COL_COUNT * 52 + (collapsedY ? 48 : 240)}px` }}
-            >
-            <thead>
-              <tr>
-                <th className={cn(
-                  "sticky left-0 z-10 bg-card border-r border-b text-left transition-all duration-200",
-                  collapsedY ? "w-12 px-1 py-1.5 text-center" : "w-56 px-2 py-1.5"
-                )}>
-                  {collapsedY ? (
-                    <button
-                      onClick={() => setCollapsedY(false)}
-                      className="p-1 rounded hover:bg-muted mx-auto flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
-                      title="Expand parameters"
-                    >
-                      <ChevronRight className="w-4 h-4" />
-                    </button>
-                  ) : (
-                    <div className="flex items-center gap-1.5">
-                      <div className="relative flex-1">
-                        <Search className="w-3 h-3 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" />
-                        <input type="text" value={query} onChange={e => setQuery(e.target.value)}
-                          placeholder="Parameter…"
-                          className="h-6 w-full rounded border bg-background pl-7 pr-2 text-[11px] font-normal normal-case tracking-normal focus:outline-none focus:ring-1 focus:ring-ring" />
-                      </div>
-                      <button
-                        onClick={() => setCollapsedY(true)}
-                        className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
-                        title="Collapse parameters"
-                      >
-                        <ChevronLeft className="w-4 h-4" />
-                      </button>
-                    </div>
+            </div>
+          ) : (
+            <AnimatePresence initial={false} custom={tlDir} mode="popLayout">
+              <motion.div
+                key={anchorDate}
+                custom={tlDir}
+                variants={tlVariants}
+                initial="enter"
+                animate="center"
+                exit="exit"
+                transition={{ type: 'spring', stiffness: 400, damping: 40 }}
+                className="relative h-full flex flex-col"
+              >
+                {/* Frosted search bar */}
+                <div className="flex-shrink-0 flex items-center gap-3 px-5 py-2.5 border-b border-border/30 bg-background/75 backdrop-blur-md shadow-[0_1px_0_0_hsl(var(--border)/0.15)]">
+                  <div className="relative flex-1 max-w-[260px]">
+                    <Search className="w-3 h-3 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground/30" />
+                    <input
+                      type="text"
+                      value={query}
+                      onChange={e => setQuery(e.target.value)}
+                      placeholder="Filter parameters…"
+                      className="h-7 w-full rounded-md border border-border/30 bg-background/40 pl-7 pr-2 text-[11px] placeholder:text-muted-foreground/25 focus:outline-none focus:ring-1 focus:ring-ring/40 focus:border-border/60 transition-colors"
+                    />
+                  </div>
+                  {loading && (
+                    <span className="flex items-center gap-1 text-[9px] text-muted-foreground/40">
+                      <RefreshCw className="w-2.5 h-2.5 animate-spin" />
+                      Updating
+                    </span>
                   )}
-                </th>
-                {cols.map(col => {
-                  const isToday = col === today;
-                  const isPast  = col < today;
-                  return (
-                    <th key={col}
-                      onClick={() => { if (!isDraggingRef.current) setDayDetail({ date: col, scale }); }}
-                      className={cn(
-                        'border-b border-r px-1 py-2 text-center font-medium w-12 cursor-pointer hover:bg-muted/50 transition-colors',
-                        isToday ? 'bg-yellow-400/25 dark:bg-yellow-400/15 text-yellow-600 dark:text-yellow-400 font-semibold' : 'text-muted-foreground',
-                      )}
-                      title={`Click to view tasks and entries for ${formatDate(col, scale)}`}
-                    >
-                      <div className="leading-tight">
-                        {formatDate(col, scale).split(' ').map((part, i) => (
-                          <div key={i} className={i === 0 ? 'font-semibold' : 'text-[9px] opacity-70'}>{part}</div>
-                        ))}
-                        {isToday && <div className="w-1 h-1 bg-yellow-500 dark:bg-yellow-400 rounded-full mx-auto mt-0.5" />}
-                      </div>
-                    </th>
-                  );
-                })}
-              </tr>
+                  <span className="ml-auto text-[9px] text-muted-foreground/25 tabular-nums">
+                    {dossierDates.length} days
+                  </span>
+                </div>
 
-              {/* Per-day lock / approval status (day scale only) */}
-              {scale === 'day' && (
-                <tr>
-                  <th className={cn(
-                    "sticky left-0 z-10 bg-card border-r border-b text-left text-[9px] font-medium uppercase tracking-widest text-muted-foreground/70 transition-all duration-200",
-                    collapsedY ? "w-12 px-1 py-1 text-center truncate text-[8px]" : "w-56 px-3 py-1"
-                  )}>
-                    {collapsedY ? "Status" : "Day status"}
-                  </th>
-                  {cols.map(col => {
-                    const lock = dayLock(col);
-                    const icon =
-                      lock === 'closed'    ? <Lock className="w-3 h-3 text-red-400 mx-auto" />
-                    : lock === 'approved'  ? <CheckCircle2 className="w-3 h-3 text-emerald-400 mx-auto" />
-                    : lock === 'submitted' ? <Lock className="w-3 h-3 text-amber-400 mx-auto" />
-                    : lock === 'reopened'  ? <RotateCcw className="w-3 h-3 text-muted-foreground/50 mx-auto" />
-                    : null;
-                    const title =
-                      lock === 'closed'    ? 'Month closed — locked'
-                    : lock === 'approved'  ? 'Approved & locked'
-                    : lock === 'submitted' ? 'Submitted, awaiting approval'
-                    : lock === 'reopened'  ? 'Reopened for edits'
-                    : '';
-                    return (
-                      <th key={col} title={title}
-                        className={cn('border-b border-r py-1 text-center', col === today && 'bg-yellow-400/20 dark:bg-yellow-400/10')}>
-                        {icon}
-                      </th>
-                    );
-                  })}
-                </tr>
-              )}
-            </thead>
-            <tbody>
-              {shownParams.length === 0 && (
-                <tr>
-                  <td colSpan={cols.length + 1} className="text-center text-xs text-muted-foreground py-8">
-                    No parameters match “{query}”.
-                  </td>
-                </tr>
-              )}
-              {shownParams.map((param, pi) => (
-                <tr key={param.id} className={cn('hover:bg-muted/30 transition-colors', pi % 2 === 0 ? '' : 'bg-muted/10')}>
-                  {/* Parameter label */}
-                  <td className={cn(
-                    "sticky left-0 z-10 bg-card border-r border-b transition-all duration-200",
-                    collapsedY ? "w-12 px-1 py-1.5 text-center" : "w-56 px-3 py-1.5"
-                  )}>
-                    {collapsedY ? (
-                      <div className="flex items-center justify-center min-h-[28px]" title={`${param.name} (${param.frequency})`}>
-                        {param.critical === 1 ? (
-                          <span className="w-2.5 h-2.5 rounded-full bg-red-500 flex-shrink-0 shadow-sm animate-pulse" title="Critical Parameter" />
-                        ) : (
-                          <span className="text-[10px] font-mono font-bold text-muted-foreground/80">
-                            {param.name.slice(0, 2).toUpperCase()}
-                          </span>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-1.5">
-                        {param.critical === 1 && (
-                          <span className="w-1.5 h-1.5 rounded-full bg-red-400 flex-shrink-0" title="Critical (2× weight)" />
-                        )}
-                        <div>
-                          <p className="font-medium text-foreground truncate max-w-[180px]">{param.name}</p>
-                          <p className="text-[9px] text-muted-foreground capitalize">
-                            {param.schedule_type === 'specific'
-                              ? `${(param.specific_dates || '').split(',').filter(Boolean).length} date(s)`
-                              : param.frequency}
-                          </p>
-                        </div>
-                      </div>
-                    )}
-                  </td>
-
-                  {/* Cells */}
-                  {cols.map(col => {
-                    const due      = isDue(param, col, scale);
-                    const isFuture = col > today;
-                    const isToday  = col === today;
-                    const e        = entryMap[`${param.id}__${col}`];
-                    const oor      = isOutOfRange(param, e);
-                    const locked   = scale === 'day' && isLockedForUser(col);
-                    return (
-                      <td key={col}
-                        onClick={() => due && !isFuture && !isDraggingRef.current && handleCellClick(param, col)}
-                        title={cellTitle(param, col, e, due, oor)}
-                        className={cn(
-                          'border-b border-r p-0.5 h-9 w-12 text-center',
-                          isToday && 'bg-yellow-400/20 dark:bg-yellow-400/10',
-                          locked && 'bg-muted/30',
-                          due && !isFuture && 'cursor-pointer hover:bg-muted/50',
-                          !due && 'opacity-40'
-                        )}
-                      >
-                        <CellStatus
-                          status={e?.status}
-                          isDueFlag={due}
-                          isToday={isToday}
-                          critical={param.critical === 1}
-                          outOfRange={oor}
-                          requiresReview={param.requires_review === 1}
-                          reviewResult={e?.result ?? null}
-                        />
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-            </motion.div>
-          </AnimatePresence>
-        )}
-      </div>
+                {/* Dossier list */}
+                <div className="flex-1 min-h-0 overflow-auto">
+                  {dossierDates.length === 0 ? (
+                    <div className="flex items-center justify-center h-48 text-muted-foreground/50 text-sm">
+                      No scheduled tasks in this range.
+                    </div>
+                  ) : (
+                    dossierDates.map(date => (
+                      <DossierDateCard
+                        key={date}
+                        date={date}
+                        params={shownParams}
+                        entryMap={entryMap}
+                        isToday={date === today}
+                        dayLock={dayLock}
+                        isLockedForUser={isLockedForUser}
+                        isAdmin={isAdmin}
+                        onParamClick={handleCellClick}
+                        today={today}
+                        todayCardRef={todayCardRef}
+                      />
+                    ))
+                  )}
+                </div>
+              </motion.div>
+            </AnimatePresence>
+          )}
+        </div>
       )}
 
-      {/* Entry modal */}
       {entry && (
         <EntryModal
           param={entry.param}
@@ -778,7 +530,6 @@ export default function MatrixPage({ dept }) {
         />
       )}
 
-      {/* Review modal (admin only) */}
       {review && (
         <ReviewModal
           param={review.param}
@@ -789,7 +540,6 @@ export default function MatrixPage({ dept }) {
         />
       )}
 
-      {/* Param builder (admin) */}
       {addParam && (
         <ParamBuilderModal
           dept={dept}
@@ -798,12 +548,10 @@ export default function MatrixPage({ dept }) {
         />
       )}
 
-      {/* Export report (admin) */}
       {exporting && (
         <ExportModal dept={dept} onClose={() => setExporting(false)} />
       )}
 
-      {/* Day Detail Panel */}
       {dayDetail && (
         <DayDetailPanel
           date={dayDetail.date}

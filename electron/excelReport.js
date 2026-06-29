@@ -30,6 +30,13 @@ function rangeText(r) {
   return '';
 }
 
+// U1: Prevent formula injection — prefix cells that begin with formula characters.
+// Applies to string cells only; numbers and dates are safe as-is.
+function sanitizeCell(v) {
+  if (typeof v !== 'string' || v.length === 0) return v;
+  return '=+-@\t\r'.includes(v[0]) ? "'" + v : v;
+}
+
 function buildComplianceWorkbook(ExcelJS, payload) {
   const { range, scopeLabel, generatedAt, rows } = payload;
   const wb = new ExcelJS.Workbook();
@@ -130,19 +137,19 @@ function buildComplianceWorkbook(ExcelJS, payload) {
       idx + 1,
       fmtDate(r.date),
       DEPT_LABEL[r.department] || r.department,
-      r.parameter,
+      sanitizeCell(r.parameter),
       r.critical ? 'Yes' : '—',
       r.schedule,
       r.entryType,
       STATUS_LABEL[r.statusRaw] || r.statusRaw,
-      r.value !== '' ? `${r.value}${r.unit ? ' ' + r.unit : ''}` : '',
+      r.value !== '' ? sanitizeCell(`${r.value}${r.unit ? ' ' + r.unit : ''}`) : '',
       rangeText(r),
       inRange,
       reviewLabel,
-      r.reviewedBy || '',
-      r.recordedBy || '',
+      sanitizeCell(r.reviewedBy || ''),
+      sanitizeCell(r.recordedBy || ''),
       fmtDateTime(r.recordedAt),
-      r.reason || '',
+      sanitizeCell(r.reason || ''),
     ]);
 
     const isEven = idx % 2 === 0;

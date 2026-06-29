@@ -173,8 +173,11 @@ export default function UsersPanel() {
   async function handleDelete(user) {
     if (!window.confirm(`Remove "${user.display_name}" (@${user.username})?\nThis cannot be undone.`)) return;
     setDeleting(user.id);
-    try { await window.cqpm.auth.deleteUser(token, user.id); await load(); }
-    finally { setDeleting(null); }
+    try {
+      const res = await window.cqpm.auth.deleteUser(token, user.id);
+      if (res?.error) { alert(`Failed to delete user: ${res.error}`); return; }
+      await load();
+    } finally { setDeleting(null); }
   }
 
   return (

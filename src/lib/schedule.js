@@ -97,6 +97,15 @@ export function getDueDatesInRange(param, fromStr, toStr) {
   return out;
 }
 
+// Start date for a named relative range (used by ExportModal and ExportDefaults in Settings).
+export function computeFromDate(range) {
+  const d = new Date();
+  if (range === 'last_7')  { d.setDate(d.getDate() - 6);  return toLocalYMD(d); }
+  if (range === 'last_30') { d.setDate(d.getDate() - 29); return toLocalYMD(d); }
+  if (range === 'last_90') { d.setDate(d.getDate() - 89); return toLocalYMD(d); }
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+}
+
 // True if a numeric entry's recorded value falls outside the param's allowed range.
 export function isOutOfRange(param, entry) {
   if (!entry || param.entry_type !== 'numeric') return false;

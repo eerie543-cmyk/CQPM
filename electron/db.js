@@ -52,22 +52,24 @@ async function ensureSeed() {
   const { count, error } = await sb().from('users').select('*', { count: 'exact', head: true });
   if (error) throw error;
   if (count && count > 0) return;
-  const hash = bcrypt.hashSync('12345', 12);
+  // S6: first-run admin — forced password change on first login
+  const hash = bcrypt.hashSync('Admin@CQPM!', 12);
   await sb().from('users').insert({
-    username: 'archit', password_hash: hash, role: 'admin',
-    department: null, display_name: 'Archit', must_change_password: 0,
+    username: 'admin', password_hash: hash, role: 'admin',
+    department: null, display_name: 'Administrator', must_change_password: 1,
     created_at: nowStr(),
   });
 }
 
 // ── Users ─────────────────────────────────────────────────────────
 async function findByUsername(username) {
-  const data = must(await sb().from('users').select('*').eq('username', username.toLowerCase()).maybeSingle());
+  const data = must(await sb().from('users').select('*').eq('username', username.toLowerCase()).eq('active', 1).maybeSingle());
   return data || undefined;
 }
 async function listUsers() {
   return must(await sb().from('users')
     .select('id, username, role, department, display_name, created_at')
+    .eq('active', 1)
     .order('created_at', { ascending: true }));
 }
 async function insertUser({ username, passwordHash, role, department, displayName, mustChange }) {
@@ -81,7 +83,9 @@ async function setPasswordHash(userId, hash) {
   must(await sb().from('users').update({ password_hash: hash, must_change_password: 0 }).eq('id', userId));
 }
 async function deleteUser(userId) {
-  must(await sb().from('users').delete().eq('id', userId));
+  // Soft-delete: mark inactive rather than hard-delete so FK references in
+  // entries/signoffs (audit trail) remain valid.
+  must(await sb().from('users').update({ active: 0 }).eq('id', userId));
 }
 
 // ── Parameters ────────────────────────────────────────────────────

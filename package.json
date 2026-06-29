@@ -8,7 +8,7 @@
     "dev": "concurrently \"vite\" \"wait-on http://localhost:5174 && electron .\"",
     "build": "vite build",
     "start": "electron .",
-    "dist": "vite build && electron-builder --win nsis -c.directories.output=C:/cqpm-release"
+    "dist": "vite build && electron-builder --win nsis"
   },
   "build": {
     "appId": "com.aadvik.cqpm",
@@ -21,14 +21,20 @@
       "electron/**/*",
       "package.json"
     ],
+    "icon": "favicon.ico",
     "extraResources": [
       {
         "from": ".env.beta",
         "to": ".env"
+      },
+      {
+        "from": "favicon.ico",
+        "to": "favicon.ico"
       }
     ],
     "asar": true,
     "win": {
+      "icon": "favicon.ico",
       "target": [
         {
           "target": "nsis",
@@ -42,7 +48,9 @@
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
-      "artifactName": "CQPM-Beta-Setup-${version}.${ext}"
+      "artifactName": "CQPM-Beta-Setup-${version}.${ext}",
+      "installerIcon": "favicon.ico",
+      "uninstallerIcon": "favicon.ico"
     }
   },
   "dependencies": {
