@@ -60,6 +60,9 @@ export function isDue(param, dateStr, scale = 'day') {
 }
 
 function isDueDay(param, dateStr) {
+  if (param.start_date && dateStr < param.start_date) return false;
+  if (param.end_date   && dateStr > param.end_date)   return false;
+
   if (param.schedule_type === 'specific') {
     const dates = (param.specific_dates || '').split(',').filter(Boolean);
     return dates.includes(dateStr);

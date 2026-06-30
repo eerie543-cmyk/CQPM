@@ -161,7 +161,7 @@ export default function ParamBuilderModal({ dept, existing, onSave, onClose, mod
     // button switches to a repeating pattern instead.
     scheduleType:  existing?.schedule_type ?? 'specific',
     // Frequency fields
-    frequency:     existing?.frequency     ?? 'daily',
+    frequency:     existing?.frequency     ?? '',
     daysOfWeek:    existing?.days_of_week  ? existing.days_of_week.split(',') : [],
     dayOfMonth:    existing?.day_of_month  ?? 1,
     // Specific dates
@@ -173,6 +173,7 @@ export default function ParamBuilderModal({ dept, existing, onSave, onClose, mod
     maxValue:      existing?.max_value     ?? '',
     critical:        existing?.critical        === 1,
     requiresReview:  existing?.requires_review === 1,
+    endDate:         existing?.end_date        ?? '',
   });
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState('');
@@ -192,6 +193,7 @@ export default function ParamBuilderModal({ dept, existing, onSave, onClose, mod
     if (!form.name.trim()) return setError('Parameter name is required.');
 
     if (form.scheduleType === 'frequency') {
+      if (!form.frequency) return setError('Please select a frequency.');
       const needsDays = form.frequency === 'weekly' || form.frequency === 'biweekly';
       if (needsDays && form.daysOfWeek.length === 0)
         return setError('Select at least one day of the week.');
@@ -214,6 +216,7 @@ export default function ParamBuilderModal({ dept, existing, onSave, onClose, mod
       const minVal = isNumeric && form.minValue !== '' ? Number(form.minValue) : null;
       const maxVal = isNumeric && form.maxValue !== '' ? Number(form.maxValue) : null;
 
+      const isDailyFreq = isFreq && form.frequency === 'daily';
       const commonFields = {
         name:           form.name.trim(),
         description:    form.description.trim() || null,
@@ -228,6 +231,7 @@ export default function ParamBuilderModal({ dept, existing, onSave, onClose, mod
         max_value:      maxVal,
         critical:       form.critical ? 1 : 0,
         requires_review: form.requiresReview ? 1 : 0,
+        end_date:       (isDailyFreq && form.endDate) ? form.endDate : null,
       };
 
       let res;
@@ -264,6 +268,7 @@ export default function ParamBuilderModal({ dept, existing, onSave, onClose, mod
           minValue:       minVal,
           maxValue:       maxVal,
           requiresReview: form.requiresReview ? 1 : 0,
+          endDate:        (isDailyFreq && form.endDate) ? form.endDate : null,
           department:     form.department,
         });
       }
@@ -379,6 +384,7 @@ export default function ParamBuilderModal({ dept, existing, onSave, onClose, mod
               <Field label="Frequency">
                 <select value={form.frequency} onChange={e => set('frequency', e.target.value)}
                   className="h-9 rounded-md border bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring w-full">
+                  <option value="" disabled>Select frequency…</option>
                   <option value="daily">Daily</option>
                   <option value="weekly">Weekly</option>
                   <option value="biweekly">Bi-weekly (every 2 weeks)</option>
@@ -387,6 +393,16 @@ export default function ParamBuilderModal({ dept, existing, onSave, onClose, mod
                   <option value="yearly">Yearly</option>
                 </select>
               </Field>
+
+              {form.frequency === 'daily' && (
+                <Field label="Repeats until (optional)">
+                  <input type="date" value={form.endDate} onChange={e => set('endDate', e.target.value)}
+                    className="h-9 w-44 rounded-md border bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+                  <p className="text-[10px] text-muted-foreground">
+                    Leave blank to repeat indefinitely.
+                  </p>
+                </Field>
+              )}
 
               {showFreqDays && (
                 <Field label="Days of Week">

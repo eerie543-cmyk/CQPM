@@ -99,7 +99,7 @@ async function allParameters() {
     .order('department', { ascending: true })
     .order('sort_order', { ascending: true }).order('id', { ascending: true }));
 }
-async function insertParameter({ department, name, description, scheduleType, frequency, daysOfWeek, dayOfMonth, specificDates, entryType, unit, minValue, maxValue, critical, requiresReview, sortOrder }) {
+async function insertParameter({ department, name, description, scheduleType, frequency, daysOfWeek, dayOfMonth, specificDates, entryType, unit, minValue, maxValue, critical, requiresReview, sortOrder, endDate }) {
   const data = must(await sb().from('parameters').insert({
     department, name, description: description || null,
     schedule_type: scheduleType || 'frequency',
@@ -110,6 +110,8 @@ async function insertParameter({ department, name, description, scheduleType, fr
     min_value: minValue ?? null, max_value: maxValue ?? null,
     critical: critical ? 1 : 0, requires_review: requiresReview ? 1 : 0,
     sort_order: sortOrder || 0, created_at: nowStr(),
+    start_date: new Date().toISOString().slice(0, 10),
+    end_date: endDate || null,
   }).select('id').single());
   return { lastInsertRowid: data.id };
 }
@@ -276,8 +278,30 @@ async function reviewParamRequest({ requestId, result, note, reviewerId, reviewe
       requires_review: req.requires_review,
       sort_order:      req.sort_order || 0,
       created_at:      nowStr(),
+      start_date:      new Date().toISOString().slice(0, 10),
+      end_date:        null,
     }));
   }
+}
+
+// ── Metrics ───────────────────────────────────────────────────────
+async function getMetricsData() {
+  const from = new Date();
+  from.setFullYear(from.getFullYear() - 1);
+  const fromDate = from.toISOString().slice(0, 10);
+
+  const [users, entries] = await Promise.all([
+    must(await sb().from('users')
+      .select('id, username, display_name, role, department')
+      .eq('active', 1)
+      .order('display_name', { ascending: true })),
+    must(await sb().from('entries')
+      .select('done_by_id, done_by_name, department, slot_date, status, result')
+      .gte('slot_date', fromDate)
+      .order('slot_date', { ascending: true })),
+  ]);
+
+  return { users, entries };
 }
 
 // ── Lock guard ────────────────────────────────────────────────────
@@ -301,4 +325,5 @@ module.exports = {
   getSignoff, getSignoffsForRange, submitDay, approveDay, reopenDay, listPendingSignoffs,
   getClosure, listClosures, closeMonth, reopenMonth, dayLockReason,
   submitParamRequest, listParamRequests, reviewParamRequest,
+  getMetricsData,
 };

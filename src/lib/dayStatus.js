@@ -5,7 +5,7 @@ import { isDue, isOutOfRange } from './schedule';
 // Per-kind presentation — a colored ring + a symbol inside it.
 export const DAY_KIND = {
   problem: { symbol: '✗', ring: 'border-red-500/70 text-red-400',           tint: 'bg-red-500/5'     },
-  pending: { symbol: '○', ring: 'border-amber-400/60 text-amber-300',        tint: 'bg-amber-500/5'   },
+  pending: { symbol: '◇', ring: 'border-amber-400/60 text-amber-300',        tint: 'bg-amber-500/5'   },
   review:  { symbol: '◷', ring: 'border-amber-500/70 text-amber-400',        tint: 'bg-amber-500/5'   },
   late:    { symbol: '≈', ring: 'border-amber-500/70 text-amber-400',        tint: 'bg-amber-500/5'   },
   done:    { symbol: '✓', ring: 'border-emerald-500/70 text-emerald-400',    tint: 'bg-emerald-500/5' },
@@ -54,8 +54,10 @@ export function getDayStatus(params, entryMap, dateStr, today) {
     names.push(p.name);
   }
 
-  if (counts.total === 0) return { kind: 'none', ...DAY_KIND.none, counts, names };
+  if (counts.total === 0) return { kind: 'none', ...DAY_KIND.none, counts, names, hasMixed: false };
 
   const kind = SEVERITY.find(k => counts[k] > 0) || 'done';
-  return { kind, ...DAY_KIND[kind], counts, names };
+  const hasGood  = counts.done + counts.late > 0;
+  const hasMixed = hasGood && counts.problem > 0;
+  return { kind, ...DAY_KIND[kind], counts, names, hasMixed };
 }

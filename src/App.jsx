@@ -19,6 +19,7 @@ import ParametersPage from './pages/ParametersPage';
 import ApprovalsPage from './pages/ApprovalsPage';
 import SettingsPage from './pages/SettingsPage';
 import UsersPanel from './components/UsersPanel';
+import MetricsPage from './pages/MetricsPage';
 import LockScreen from './components/LockScreen';
 import AnnouncementBanner from './components/AnnouncementBanner';
 import UpdateBanner from './components/UpdateBanner';
@@ -69,7 +70,7 @@ function AppShell() {
 
   // Pages can be switched off remotely; fall back to Today if the current one is unavailable.
   // 'parameters' is now accessible by staff (they see Request Parameter button, not Add).
-  const adminPages = ['approvals', 'users'];
+  const adminPages = ['approvals', 'users', 'metrics'];
   let activePage = page;
   if (adminPages.includes(activePage) && !adminEnabled) activePage = 'today';
   if (activePage === 'matrix'   && !matrixEnabled)      activePage = 'today';
@@ -113,6 +114,7 @@ function AppShell() {
         {activePage === 'today'      && (activeDept ? <TodayPage  dept={activeDept} /> : noDept)}
         {activePage === 'matrix'     && (activeDept ? <MatrixPage dept={activeDept} /> : noDept)}
         {activePage === 'users'      && <UsersPanel />}
+        {activePage === 'metrics'    && <MetricsPage />}
       </main>
       </div>
       <SessionWarning />

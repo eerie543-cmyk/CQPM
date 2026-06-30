@@ -12,6 +12,10 @@ for (const envPath of [
   }
 }
 const { app, BrowserWindow, ipcMain, dialog, net } = require('electron');
+const {
+  cleanupOnStartup, checkForUpdate, downloadUpdate,
+  cancelDownload, applyAndRestart, hasPending,
+} = require('./updater');
 const bcrypt = require('bcryptjs');
 const ExcelJS = require('exceljs');
 const { buildComplianceWorkbook } = require('./excelReport');
@@ -23,6 +27,7 @@ const {
   getSignoff, getSignoffsForRange, submitDay, approveDay, reopenDay, listPendingSignoffs,
   getClosure, listClosures, closeMonth, reopenMonth, dayLockReason,
   submitParamRequest, listParamRequests, reviewParamRequest,
+  getMetricsData,
 } = require('./db');
 const { signToken, verifyToken } = require('./auth');
 
@@ -79,6 +84,7 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
+  cleanupOnStartup();
   try {
     await ensureSeed();
   } catch (err) {
@@ -280,6 +286,7 @@ const PARAM_UPDATE_ALLOWED = [
   'name', 'description', 'schedule_type', 'frequency', 'days_of_week',
   'day_of_month', 'specific_dates', 'entry_type', 'unit', 'min_value',
   'max_value', 'critical', 'requires_review', 'sort_order', 'active',
+  'start_date', 'end_date',
 ];
 ipcMain.handle('params:update', async (_e, { token, id, fields } = {}) => {
   let payload;
@@ -536,6 +543,15 @@ ipcMain.handle('paramreq:review', async (_e, { token, requestId, result, note } 
   } catch (err) { return { error: err.message }; }
 });
 
+// ── Metrics (admin only) ──────────────────────────────────────────
+ipcMain.handle('metrics:get', async (_e, { token } = {}) => {
+  let payload;
+  try { payload = verifyToken(token); } catch { return { error: 'Session expired.' }; }
+  if (payload.role !== 'admin') return { error: 'Unauthorized.' };
+  try { return { data: await getMetricsData() }; }
+  catch (err) { return { error: err.message }; }
+});
+
 // ── Remote config: fetch + heartbeat (secret lives in main only) ──
 // S5: renderer never sees REMOTE_CONFIG_SECRET — IPC proxies the requests.
 ipcMain.handle('config:fetch', async () => {
@@ -564,3 +580,22 @@ ipcMain.handle('config:heartbeat', async (_e, { event, user, department, payload
     });
   } catch { /* non-fatal */ }
 });
+
+// ── Updater ───────────────────────────────────────────────────────
+// S5: REMOTE_CONFIG_URL and REMOTE_CONFIG_SECRET stay in main only.
+// The renderer triggers checks and downloads but never sees URLs or secrets.
+ipcMain.handle('update:check', async () => {
+  return checkForUpdate(REMOTE_CONFIG_URL, REMOTE_CONFIG_SECRET);
+});
+
+ipcMain.handle('update:download', async (e) => {
+  const sender = e.sender;
+  return downloadUpdate((progress) => {
+    if (!sender.isDestroyed()) sender.send('update:progress', progress);
+  });
+});
+
+ipcMain.handle('update:cancel',        ()  => cancelDownload());
+ipcMain.handle('update:apply-restart', ()  => applyAndRestart());
+ipcMain.handle('update:has-pending',   ()  => hasPending());
+ipcMain.handle('update:version',       ()  => app.getVersion());

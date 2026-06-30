@@ -42,12 +42,29 @@ contextBridge.exposeInMainWorld('cqpm', {
     list:   (token, status)                  => ipcRenderer.invoke('paramreq:list',   { token, status }),
     review: (token, requestId, result, note) => ipcRenderer.invoke('paramreq:review', { token, requestId, result, note }),
   },
+  metrics: {
+    get: (token) => ipcRenderer.invoke('metrics:get', { token }),
+  },
   db: {
     ping: () => ipcRenderer.invoke('db:ping'),
   },
   config: {
     fetch:     ()     => ipcRenderer.invoke('config:fetch'),
     heartbeat: (data) => ipcRenderer.invoke('config:heartbeat', data),
+  },
+  update: {
+    check:        ()    => ipcRenderer.invoke('update:check'),
+    download:     ()    => ipcRenderer.invoke('update:download'),
+    cancel:       ()    => ipcRenderer.invoke('update:cancel'),
+    applyRestart: ()    => ipcRenderer.invoke('update:apply-restart'),
+    hasPending:   ()    => ipcRenderer.invoke('update:has-pending'),
+    version:      ()    => ipcRenderer.invoke('update:version'),
+    // Returns a cleanup function — call it in useEffect's return
+    onProgress: (cb) => {
+      const wrapped = (_e, data) => cb(data);
+      ipcRenderer.on('update:progress', wrapped);
+      return () => ipcRenderer.off('update:progress', wrapped);
+    },
   },
   win: {
     minimize:       () => ipcRenderer.invoke('window:minimize'),

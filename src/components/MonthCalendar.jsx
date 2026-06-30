@@ -39,6 +39,14 @@ function DayTile({ dateStr, monthIdx, today, status, onSelect, draggedRef }) {
   const hasDue  = status.kind !== 'none';
   const isFuture = status.kind === 'future';
 
+  // Break counts into display groups: good → pending → review → bad
+  const statusParts = hasDue && !isFuture ? [
+    (status.counts.done + status.counts.late) > 0 && { n: status.counts.done + status.counts.late, sym: '✓', cls: 'text-emerald-400' },
+    status.counts.pending > 0                     && { n: status.counts.pending,                  sym: '◇', cls: 'text-amber-300'   },
+    status.counts.review  > 0                     && { n: status.counts.review,                   sym: '◷', cls: 'text-amber-400'   },
+    status.counts.problem > 0                     && { n: status.counts.problem,                  sym: '✗', cls: 'text-red-400/80'  },
+  ].filter(Boolean) : [];
+
   return (
     <button
       onClick={() => { if (!draggedRef.current) onSelect(dateStr); }}
@@ -59,27 +67,29 @@ function DayTile({ dateStr, monthIdx, today, status, onSelect, draggedRef }) {
         {dayNum}
       </span>
 
-      {/* Body indicator */}
-      {hasDue && !isFuture && (
-        <div className="flex-1 flex items-center justify-center">
-          <span
-            className={cn(
-              'flex items-center justify-center w-8 h-8 rounded-full border-2 text-sm font-bold font-mono leading-none shadow-sm transition-transform group-hover:scale-110',
-              status.ring,
-            )}
-            title={`${status.counts.total} scheduled · ${status.kind}`}
-          >
-            {status.symbol}
-          </span>
+      {/* Body indicator — one group per status type, count-prefixed when > 1 */}
+      {statusParts.length > 0 && (
+        <div className="flex-1 flex items-center justify-center" title={`${status.counts.total} scheduled`}>
+          {statusParts.length === 1 ? (
+            <span className={cn('text-xs font-bold font-mono leading-none transition-transform group-hover:scale-110', statusParts[0].cls)}>
+              {statusParts[0].n > 1 ? `${statusParts[0].n}${statusParts[0].sym}` : statusParts[0].sym}
+            </span>
+          ) : (
+            <div className="flex items-center gap-1.5">
+              {statusParts.map(({ n, sym, cls }) => (
+                <span key={sym} className={cn('text-xs font-bold font-mono leading-none', cls)}>
+                  {n}{sym}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       )}
-      {/* Future / upcoming cells: name the task(s) in yellow, flush centre-left */}
-      {isFuture && (
-        <div className="flex-1 flex items-center justify-start w-full" title={status.names.join(', ')}>
-          <span className="text-[10px] font-semibold text-yellow-400 leading-tight text-left line-clamp-3">
-            {status.names.length > 2
-              ? `${status.names.slice(0, 2).join(', ')} +${status.names.length - 2}`
-              : status.names.join(', ')}
+      {/* Future / upcoming cells: task count as "N tasks" */}
+      {isFuture && status.counts.total > 0 && (
+        <div className="flex-1 flex items-center justify-center" title={status.names.join(', ')}>
+          <span className="text-[10px] font-semibold text-yellow-400/70 leading-none">
+            {status.counts.total} task{status.counts.total !== 1 ? 's' : ''}
           </span>
         </div>
       )}

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { FlaskConical, LayoutGrid, CalendarDays, Users, LogOut, ChevronRight, ClipboardCheck, Inbox, Sun, Moon, Settings } from 'lucide-react';
+import { FlaskConical, LayoutGrid, CalendarDays, Users, LogOut, ChevronRight, ClipboardCheck, Inbox, Sun, Moon, Settings, BarChart2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { useRemoteConfigContext } from '@/hooks/useRemoteConfigContext';
@@ -155,6 +155,26 @@ export default function Sidebar({ page, onPage, activeDept, onDept, isAdmin, mat
                   : 'group-hover/users:text-primary group-hover/users:scale-110'
               )} />
               <span>Users</span>
+            </button>
+          )}
+
+          {isAdmin && (
+            <button
+              onClick={() => onPage('metrics')}
+              className={cn(
+                'group/metrics w-full flex items-center gap-2.5 px-2 py-1.5 rounded-md text-left text-xs transition-all duration-150',
+                page === 'metrics'
+                  ? 'bg-primary/10 text-foreground font-medium'
+                  : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+              )}
+            >
+              <BarChart2 className={cn(
+                'w-3.5 h-3.5 flex-shrink-0 transition-all duration-150',
+                page === 'metrics'
+                  ? 'text-primary'
+                  : 'group-hover/metrics:text-primary group-hover/metrics:scale-110'
+              )} />
+              <span>Metrics</span>
             </button>
           )}
 
