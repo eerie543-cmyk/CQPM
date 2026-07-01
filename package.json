@@ -1,6 +1,6 @@
 {
   "name": "cqpm",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Continuous Quality Process Monitoring",
   "author": "Aadvik",
   "main": "electron/main.js",
