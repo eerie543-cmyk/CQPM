@@ -223,52 +223,70 @@ function cancelDownload() {
 function applyAndRestart() {
   if (!fs.existsSync(PENDING)) return false;
 
-  const exe  = process.execPath;
-  const name = path.basename(exe, '.exe');
+  const exe    = process.execPath;
+  const name   = path.basename(exe, '.exe');
+  const script = path.join(RESOURCES, 'update-swap.ps1');
 
-  // Escape backslashes and double-quotes for use inside a PS double-quoted string
-  const esc = s => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  // PS single-quoted strings: only ' needs escaping (as ''). Backslashes are literal.
+  const psq = s => s.replace(/'/g, "''");
 
   const ps = `
-$name    = "${esc(name)}"
-$asar    = "${esc(ASAR_PATH)}"
-$pending = "${esc(PENDING)}"
-$backup  = "${esc(BACKUP)}"
-$exe     = "${esc(exe)}"
+$ErrorActionPreference = 'Continue'
+$name    = '${psq(name)}'
+$asar    = '${psq(ASAR_PATH)}'
+$pending = '${psq(PENDING)}'
+$backup  = '${psq(BACKUP)}'
+$exe     = '${psq(exe)}'
+$script  = '${psq(script)}'
 
-# Wait for the old process to fully exit (up to 15 s)
+# Wait for the old process to fully exit (up to 20 s)
 $i = 0
-while ((Get-Process -Name $name -ErrorAction SilentlyContinue) -and $i -lt 75) {
+while ((Get-Process -Name $name -ErrorAction SilentlyContinue) -and $i -lt 100) {
   Start-Sleep -Milliseconds 200
   $i++
 }
-Start-Sleep -Milliseconds 500
+Start-Sleep -Milliseconds 1000
 
-try {
-  # Back up current ASAR in case we need to roll back
-  Copy-Item -Force $asar $backup
-  # Swap in the new ASAR
-  Move-Item -Force $pending $asar
-  # Success — drop the backup
-  Remove-Item -Force $backup -ErrorAction SilentlyContinue
-} catch {
-  # Rollback: restore backup so the app is still runnable
-  if (Test-Path $backup) {
-    try { Copy-Item -Force $backup $asar } catch {}
-  }
-  if (Test-Path $pending) {
-    try { Remove-Item -Force $pending } catch {}
+# Retry swap up to 10 times to handle brief OS file locks after process exit
+$swapped = $false
+for ($j = 0; $j -lt 10; $j++) {
+  try {
+    Copy-Item -Force -Path $asar -Destination $backup -ErrorAction Stop
+    Move-Item -Force -Path $pending -Destination $asar -ErrorAction Stop
+    Remove-Item -Force $backup -ErrorAction SilentlyContinue
+    $swapped = $true
+    break
+  } catch {
+    Start-Sleep -Milliseconds 500
   }
 }
 
+if (-not $swapped) {
+  # Swap failed — remove pending so the app doesn't loop on restart
+  Remove-Item -Force $pending -ErrorAction SilentlyContinue
+  if ((Test-Path $backup) -and -not (Test-Path $asar)) {
+    Move-Item -Force $backup $asar -ErrorAction SilentlyContinue
+  }
+}
+
+# Clean up this script file
+Start-Sleep -Milliseconds 200
+Remove-Item -Force $script -ErrorAction SilentlyContinue
+
 # Always re-launch regardless of swap outcome
-Start-Process $exe
+Start-Process -FilePath $exe
 `.trim();
 
-  const child = spawn('powershell.exe', [
-    '-WindowStyle',    'Hidden',
+  try { fs.writeFileSync(script, ps, 'utf8'); } catch { return false; }
+
+  // Use cmd /c start to fully detach from parent's Windows Job Object
+  const child = spawn('cmd.exe', [
+    '/c', 'start', '', '/b',
+    'powershell.exe',
+    '-ExecutionPolicy', 'Bypass',
     '-NonInteractive',
-    '-Command', ps,
+    '-WindowStyle', 'Hidden',
+    '-File', script,
   ], { detached: true, stdio: 'ignore' });
   child.unref();
 
